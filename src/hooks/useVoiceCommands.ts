@@ -6,7 +6,36 @@ import { useAppStore } from '@/lib/store';
 interface VoiceCommandsReturn {
   isListening: boolean;
   lastCommand: string | null;
+  supportedCommands: string[];
 }
+
+// Multi-language command definitions
+const COMMAND_DEFINITIONS = {
+  start: {
+    triggers: ['start', 'starten', 'aufnahme', 'aufnehmen', 'record', 'начни', 'запис'],
+    action: 'startRecording',
+  },
+  stop: {
+    triggers: ['stopp', 'stop', 'beenden', 'ende', 'спри', 'стоп'],
+    action: 'stopRecording',
+  },
+  help: {
+    triggers: ['hilfe', 'help', 'befehle', 'commands', 'помощ'],
+    action: 'showHelp',
+  },
+  important: {
+    triggers: ['wichtig', 'important', 'markieren', 'mark', 'важно'],
+    action: 'markImportant',
+  },
+  analytics: {
+    triggers: ['analytics', 'statistik', 'analyse', 'статистика'],
+    action: 'openAnalytics',
+  },
+  settings: {
+    triggers: ['einstellungen', 'settings', 'optionen', 'настройки'],
+    action: 'openSettings',
+  },
+};
 
 export function useVoiceCommands(): VoiceCommandsReturn {
   const [isListening, setIsListening] = useState(false);
@@ -14,10 +43,10 @@ export function useVoiceCommands(): VoiceCommandsReturn {
   const recognitionRef = useRef<any>(null);
   const isEnabledRef = useRef(false);
   const isProcessingRef = useRef(false);
-  
-  const { voiceCommandsEnabled, recordingState } = useAppStore();
 
-  // Refs aktualisieren
+  const { voiceCommandsEnabled, recordingState, currentLanguage } = useAppStore();
+
+  // Update ref when enabled state changes
   useEffect(() => {
     isEnabledRef.current = voiceCommandsEnabled;
   }, [voiceCommandsEnabled]);
@@ -26,81 +55,151 @@ export function useVoiceCommands(): VoiceCommandsReturn {
     if (typeof window === 'undefined') return;
     speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = 'de-DE';
+
+    // Set language based on current app language
+    const langCodes: Record<string, string> = {
+      de: 'de-DE',
+      en: 'en-US',
+      bg: 'bg-BG',
+    };
+    utterance.lang = langCodes[currentLanguage] || 'de-DE';
     utterance.rate = 1.0;
+    utterance.volume = 0.8;
     speechSynthesis.speak(utterance);
-  }, []);
+  }, [currentLanguage]);
 
   const processCommand = useCallback((transcript: string) => {
     if (isProcessingRef.current) return;
     isProcessingRef.current = true;
-    
+
     const lower = transcript.toLowerCase().trim();
-    console.log('🎤 Voice command:', lower);
+    console.log('🎤 Voice command (background):', lower);
     setLastCommand(lower);
 
     const state = useAppStore.getState();
     const isCurrentlyRecording = state.recordingState === 'recording';
 
-    // STOP Befehl
-    if ((lower.includes('stopp') || lower.includes('stop') || lower.includes('beenden') || lower.includes('ende')) 
-        && !lower.includes('start')) {
-      if (isCurrentlyRecording) {
-        console.log('✅ Stopping recording via voice');
-        window.dispatchEvent(new CustomEvent('velamind:stopRecording'));
-        speak('Aufnahme gestoppt');
+    // Check for START command (only when not recording)
+    if (!isCurrentlyRecording) {
+      for (const trigger of COMMAND_DEFINITIONS.start.triggers) {
+        if (lower.includes(trigger)) {
+          console.log('✅ Starting recording via voice');
+          window.dispatchEvent(new CustomEvent('velamind:startRecording'));
+
+          const messages: Record<string, string> = {
+            de: 'Aufnahme gestartet',
+            en: 'Recording started',
+            bg: 'Записът започна',
+          };
+          speak(messages[currentLanguage] || messages.de);
+
+          setTimeout(() => { isProcessingRef.current = false; }, 1500);
+          return;
+        }
       }
-      setTimeout(() => { isProcessingRef.current = false; }, 1000);
-      return;
     }
 
-    // START Befehl
-    if (lower.includes('start') || lower.includes('aufnahme') || lower.includes('aufnehmen')) {
-      if (!isCurrentlyRecording && state.recordingState === 'idle') {
-        console.log('✅ Starting recording via voice');
-        window.dispatchEvent(new CustomEvent('velamind:startRecording'));
-        speak('Aufnahme gestartet');
+    // Check for HELP command
+    for (const trigger of COMMAND_DEFINITIONS.help.triggers) {
+      if (lower.includes(trigger)) {
+        const messages: Record<string, string> = {
+          de: 'Verfügbare Befehle: Start für Aufnahme, Stopp zum Beenden, Wichtig zum Markieren, Einstellungen, Analytics',
+          en: 'Available commands: Start to record, Stop to end, Important to mark, Settings, Analytics',
+          bg: 'Налични команди: Започни за запис, Спри за край, Важно за маркиране',
+        };
+        speak(messages[currentLanguage] || messages.de);
+
+        setTimeout(() => { isProcessingRef.current = false; }, 500);
+        return;
       }
-      setTimeout(() => { isProcessingRef.current = false; }, 1000);
-      return;
     }
 
-    // WICHTIG Befehl
-    if (lower.includes('wichtig') || lower.includes('markier')) {
-      if (state.selectedNoteId) {
-        state.toggleImportant(state.selectedNoteId);
-        speak('Notiz markiert');
+    // Check for IMPORTANT command
+    for (const trigger of COMMAND_DEFINITIONS.important.triggers) {
+      if (lower.includes(trigger)) {
+        if (state.selectedNoteId) {
+          state.toggleImportant(state.selectedNoteId);
+
+          const messages: Record<string, string> = {
+            de: 'Notiz markiert',
+            en: 'Note marked',
+            bg: 'Бележката е маркирана',
+          };
+          speak(messages[currentLanguage] || messages.de);
+        } else {
+          const messages: Record<string, string> = {
+            de: 'Keine Notiz ausgewählt',
+            en: 'No note selected',
+            bg: 'Няма избрана бележка',
+          };
+          speak(messages[currentLanguage] || messages.de);
+        }
+
+        setTimeout(() => { isProcessingRef.current = false; }, 500);
+        return;
       }
-      setTimeout(() => { isProcessingRef.current = false; }, 500);
-      return;
     }
 
-    // HILFE Befehl
-    if (lower.includes('hilfe') || lower.includes('help')) {
-      speak('Sage: Start für Aufnahme, Stopp zum Beenden, Wichtig zum Markieren');
-      setTimeout(() => { isProcessingRef.current = false; }, 500);
-      return;
+    // Check for ANALYTICS command
+    for (const trigger of COMMAND_DEFINITIONS.analytics.triggers) {
+      if (lower.includes(trigger)) {
+        window.dispatchEvent(new CustomEvent('velamind:navigate', { detail: 'analytics' }));
+
+        const messages: Record<string, string> = {
+          de: 'Analytics geöffnet',
+          en: 'Opening analytics',
+          bg: 'Отваряне на статистиката',
+        };
+        speak(messages[currentLanguage] || messages.de);
+
+        setTimeout(() => { isProcessingRef.current = false; }, 500);
+        return;
+      }
+    }
+
+    // Check for SETTINGS command
+    for (const trigger of COMMAND_DEFINITIONS.settings.triggers) {
+      if (lower.includes(trigger)) {
+        window.dispatchEvent(new CustomEvent('velamind:navigate', { detail: 'settings' }));
+
+        const messages: Record<string, string> = {
+          de: 'Einstellungen geöffnet',
+          en: 'Opening settings',
+          bg: 'Отваряне на настройките',
+        };
+        speak(messages[currentLanguage] || messages.de);
+
+        setTimeout(() => { isProcessingRef.current = false; }, 500);
+        return;
+      }
     }
 
     setTimeout(() => { isProcessingRef.current = false; }, 300);
-  }, [speak]);
+  }, [speak, currentLanguage]);
 
   const startListening = useCallback(() => {
     if (typeof window === 'undefined') return;
     if (recognitionRef.current) return;
-    
+
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SpeechRecognition) return;
 
-    console.log('🎤 Starting voice command listener...');
-    
+    console.log('🎤 Starting background voice command listener...');
+
     const recognition = new SpeechRecognition();
     recognition.continuous = true;
     recognition.interimResults = false;
-    recognition.lang = 'de-DE';
+
+    // Set language based on current app language
+    const langCodes: Record<string, string> = {
+      de: 'de-DE',
+      en: 'en-US',
+      bg: 'bg-BG',
+    };
+    recognition.lang = langCodes[currentLanguage] || 'de-DE';
 
     recognition.onstart = () => {
-      console.log('🎤 Voice command listener active');
+      console.log('🎤 Background voice listener active');
       setIsListening(true);
     };
 
@@ -113,19 +212,19 @@ export function useVoiceCommands(): VoiceCommandsReturn {
 
     recognition.onerror = (event: any) => {
       if (event.error !== 'no-speech' && event.error !== 'aborted') {
-        console.log('🎤 Error:', event.error);
+        console.log('🎤 Background listener error:', event.error);
       }
     };
 
     recognition.onend = () => {
-      // NUR neu starten wenn:
-      // 1. Voice Commands noch aktiviert sind
-      // 2. KEINE Aufnahme läuft (sonst Konflikt!)
+      // Only restart if:
+      // 1. Voice Commands still enabled
+      // 2. NO recording in progress (recording uses its own recognition)
       const state = useAppStore.getState();
       const shouldRestart = isEnabledRef.current && state.recordingState !== 'recording';
-      
-      console.log('🎤 Listener ended, restart:', shouldRestart);
-      
+
+      console.log('🎤 Background listener ended, restart:', shouldRestart);
+
       if (shouldRestart && recognitionRef.current) {
         setTimeout(() => {
           try {
@@ -143,17 +242,23 @@ export function useVoiceCommands(): VoiceCommandsReturn {
     };
 
     recognitionRef.current = recognition;
-    
+
     try {
       recognition.start();
-      speak('Sprachbefehle aktiviert');
+
+      const messages: Record<string, string> = {
+        de: 'Sprachbefehle aktiviert',
+        en: 'Voice commands enabled',
+        bg: 'Гласовите команди са активирани',
+      };
+      speak(messages[currentLanguage] || messages.de);
     } catch (e) {
-      console.error('Could not start:', e);
+      console.error('Could not start background voice listener:', e);
     }
-  }, [processCommand, speak]);
+  }, [processCommand, speak, currentLanguage]);
 
   const stopListening = useCallback(() => {
-    console.log('🎤 Stopping voice command listener...');
+    console.log('🎤 Stopping background voice command listener...');
     if (recognitionRef.current) {
       try { recognitionRef.current.stop(); } catch (e) {}
       recognitionRef.current = null;
@@ -161,32 +266,35 @@ export function useVoiceCommands(): VoiceCommandsReturn {
     setIsListening(false);
   }, []);
 
-  // Voice Commands pausieren wenn Aufnahme startet
+  // Pause voice commands when recording starts, resume when it ends
   useEffect(() => {
     if (recordingState === 'recording' && recognitionRef.current) {
-      console.log('🎤 Pausing voice commands for recording...');
+      console.log('🎤 Pausing background voice commands for recording...');
       try { recognitionRef.current.stop(); } catch (e) {}
     } else if (recordingState === 'idle' && voiceCommandsEnabled && !recognitionRef.current) {
-      console.log('🎤 Resuming voice commands after recording...');
+      console.log('🎤 Resuming background voice commands after recording...');
       startListening();
     }
   }, [recordingState, voiceCommandsEnabled, startListening]);
 
-  // Start/Stop basierend auf Setting
+  // Start/Stop based on setting
   useEffect(() => {
     if (voiceCommandsEnabled && recordingState !== 'recording') {
       startListening();
     } else if (!voiceCommandsEnabled) {
       stopListening();
     }
-    
+
     return () => {
       if (recognitionRef.current) {
         try { recognitionRef.current.stop(); } catch (e) {}
         recognitionRef.current = null;
       }
     };
-  }, [voiceCommandsEnabled]);
+  }, [voiceCommandsEnabled, recordingState, startListening, stopListening]);
 
-  return { isListening, lastCommand };
+  // Get list of supported commands for display
+  const supportedCommands = Object.keys(COMMAND_DEFINITIONS);
+
+  return { isListening, lastCommand, supportedCommands };
 }

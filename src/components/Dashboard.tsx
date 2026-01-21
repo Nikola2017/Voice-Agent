@@ -52,12 +52,21 @@ export function Dashboard() {
       if (recordButton) recordButton.click();
     };
 
+    const handleNavigate = (e: CustomEvent<string>) => {
+      const target = e.detail;
+      if (target === 'analytics' || target === 'settings' || target === 'team' || target === 'notes') {
+        setCurrentView(target as View);
+      }
+    };
+
     window.addEventListener('velamind:startRecording', handleStartRecording);
     window.addEventListener('velamind:stopRecording', handleStopRecording);
+    window.addEventListener('velamind:navigate', handleNavigate as EventListener);
 
     return () => {
       window.removeEventListener('velamind:startRecording', handleStartRecording);
       window.removeEventListener('velamind:stopRecording', handleStopRecording);
+      window.removeEventListener('velamind:navigate', handleNavigate as EventListener);
     };
   }, []);
 
