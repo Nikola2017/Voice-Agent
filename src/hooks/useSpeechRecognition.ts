@@ -24,11 +24,20 @@ interface UseSpeechRecognitionReturn {
   resetTranscript: () => void;
 }
 
-// Wake word variations (how Google might hear "VelaMind")
+// Wake word variations (how Google Speech Recognition actually hears "VelaMind")
 const WAKE_WORDS = [
+  // Original
   'velamind', 'vela mind', 'wella mind', 'mela mind', 'bella mind',
   'vela', 'wella', 'mela', 'bella', 'vella',
-  'fela mind', 'fella mind', 'fellow mind'
+  // German misrecognitions (what Google actually hears!)
+  'wähle meint', 'wähler meint', 'wähle mind', 'wähler mind',
+  'wer meint', 'wer da meint', 'wer mind',
+  'welle meint', 'welle mind', 'wellen mind',
+  'fela mind', 'fella mind', 'fellow mind',
+  'velo mind', 'velo meint', 'vella meint',
+  'wella meint', 'mella mind', 'mella meint',
+  // Short versions
+  'wähle', 'wähler', 'welle', 'velo'
 ];
 
 const STOP_WORDS = ['stop', 'stopp', 'beenden', 'ende', 'fertig', 'schluss'];
