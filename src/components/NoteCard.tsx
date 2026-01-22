@@ -1,10 +1,10 @@
 'use client';
 
 import { useState } from 'react';
-import { 
-  Edit3, 
-  Copy, 
-  Trash2, 
+import {
+  Edit3,
+  Copy,
+  Trash2,
   Play,
   Check,
   X,
@@ -17,7 +17,9 @@ import {
   Send,
   Users,
   ChevronDown,
-  Minimize2
+  Minimize2,
+  Languages,
+  Loader2
 } from 'lucide-react';
 import { useAppStore } from '@/lib/store';
 import type { Note } from '@/types';
@@ -52,7 +54,12 @@ export function NoteCard({ note }: NoteCardProps) {
   const [newComment, setNewComment] = useState('');
   const [showShareModal, setShowShareModal] = useState(false);
   const [shareEmail, setShareEmail] = useState('');
-  const [isMinimized, setIsMinimized] = useState(true); // Standardmäßig minimiert
+  const [isMinimized, setIsMinimized] = useState(true);
+  // Translation states
+  const [translatedText, setTranslatedText] = useState<string | null>(null);
+  const [translatedSummary, setTranslatedSummary] = useState<string | null>(null);
+  const [isTranslating, setIsTranslating] = useState(false);
+  const [showTranslation, setShowTranslation] = useState(false);
   
   const isEditing = isEditingTranscript && editingNoteId === note.id;
 
@@ -148,16 +155,80 @@ export function NoteCard({ note }: NoteCardProps) {
     setEditingTranscript(false, null);
   };
 
-  const handleSpeak = () => {
+  const handleSpeak = (useEnglish: boolean = false) => {
     if (isSpeaking) {
       speechSynthesis.cancel();
       setIsSpeaking(false);
     } else {
-      const utterance = new SpeechSynthesisUtterance(note.summary || note.rawTranscript);
-      utterance.lang = note.language === 'de' ? 'de-DE' : note.language === 'bg' ? 'bg-BG' : 'en-US';
+      let textToSpeak: string;
+      let lang: string;
+
+      if (useEnglish && translatedText) {
+        // Speak translated English version
+        textToSpeak = translatedSummary || translatedText;
+        lang = 'en-US';
+      } else {
+        // Speak original language
+        textToSpeak = note.summary || note.rawTranscript;
+        lang = note.language === 'de' ? 'de-DE' : note.language === 'bg' ? 'bg-BG' : 'en-US';
+      }
+
+      const utterance = new SpeechSynthesisUtterance(textToSpeak);
+      utterance.lang = lang;
       utterance.onend = () => setIsSpeaking(false);
       speechSynthesis.speak(utterance);
       setIsSpeaking(true);
+    }
+  };
+
+  const handleTranslate = async () => {
+    if (translatedText) {
+      // Toggle translation view
+      setShowTranslation(!showTranslation);
+      return;
+    }
+
+    setIsTranslating(true);
+
+    try {
+      // Translate transcript
+      const sourceLang = note.language === 'de' ? 'de' : note.language === 'bg' ? 'bg' : 'en';
+      const targetLang = 'en';
+
+      if (sourceLang === targetLang) {
+        setTranslatedText(note.rawTranscript);
+        setTranslatedSummary(note.summary);
+        setShowTranslation(true);
+        setIsTranslating(false);
+        return;
+      }
+
+      // Use MyMemory free translation API
+      const translateText = async (text: string): Promise<string> => {
+        const response = await fetch(
+          `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=${sourceLang}|${targetLang}`
+        );
+        const data = await response.json();
+        if (data.responseStatus === 200) {
+          return data.responseData.translatedText;
+        }
+        throw new Error('Translation failed');
+      };
+
+      // Translate both transcript and summary
+      const [translated, translatedSum] = await Promise.all([
+        translateText(note.rawTranscript),
+        note.summary ? translateText(note.summary) : Promise.resolve('')
+      ]);
+
+      setTranslatedText(translated);
+      setTranslatedSummary(translatedSum);
+      setShowTranslation(true);
+    } catch (error) {
+      console.error('Translation error:', error);
+      alert('Übersetzung fehlgeschlagen. Bitte versuchen Sie es später erneut.');
+    } finally {
+      setIsTranslating(false);
     }
   };
 
@@ -393,14 +464,46 @@ export function NoteCard({ note }: NoteCardProps) {
           </div>
         )}
 
-        {/* Vorlesen Button */}
-        <button 
-          onClick={handleSpeak}
-          className="mt-3 flex items-center gap-2 px-4 py-2 rounded-lg bg-purple-500/20 text-purple-300 text-sm hover:bg-purple-500/30 transition-colors"
-        >
-          {isSpeaking ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
-          {isSpeaking ? 'Stoppen' : 'Vorlesen'}
-        </button>
+        {/* Action Buttons Row */}
+        <div className="mt-3 flex flex-wrap gap-2">
+          {/* Vorlesen Original */}
+          <button
+            onClick={() => handleSpeak(false)}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-purple-500/20 text-purple-300 text-sm hover:bg-purple-500/30 transition-colors"
+          >
+            {isSpeaking && !showTranslation ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
+            Vorlesen
+          </button>
+
+          {/* Translate Button */}
+          <button
+            onClick={handleTranslate}
+            disabled={isTranslating}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm transition-colors ${
+              showTranslation
+                ? 'bg-green-500/20 text-green-300 hover:bg-green-500/30'
+                : 'bg-blue-500/20 text-blue-300 hover:bg-blue-500/30'
+            } disabled:opacity-50`}
+          >
+            {isTranslating ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Languages className="w-4 h-4" />
+            )}
+            {isTranslating ? 'Übersetze...' : showTranslation ? '🇬🇧 English' : 'Übersetzen'}
+          </button>
+
+          {/* Vorlesen English (nur wenn übersetzt) */}
+          {translatedText && (
+            <button
+              onClick={() => handleSpeak(true)}
+              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-green-500/20 text-green-300 text-sm hover:bg-green-500/30 transition-colors"
+            >
+              {isSpeaking && showTranslation ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
+              🇬🇧 Speak English
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Content - nur anzeigen wenn nicht minimiert */}
@@ -453,17 +556,32 @@ export function NoteCard({ note }: NoteCardProps) {
         ) : (
           <div className="mb-4">
             <div className="flex items-center justify-between mb-2">
-              <h4 className="text-sm font-semibold text-zinc-400">Transkription</h4>
-              <button
-                onClick={handleStartEdit}
-                className="text-xs text-purple-400 hover:text-purple-300 flex items-center gap-1"
-              >
-                <Edit3 className="w-3 h-3" />
-                Bearbeiten
-              </button>
+              <h4 className="text-sm font-semibold text-zinc-400 flex items-center gap-2">
+                Transkription
+                {showTranslation && translatedText && (
+                  <span className="px-2 py-0.5 rounded bg-green-500/20 text-green-400 text-xs">🇬🇧 English</span>
+                )}
+              </h4>
+              <div className="flex items-center gap-2">
+                {showTranslation && translatedText && (
+                  <button
+                    onClick={() => setShowTranslation(false)}
+                    className="text-xs text-blue-400 hover:text-blue-300"
+                  >
+                    Original anzeigen
+                  </button>
+                )}
+                <button
+                  onClick={handleStartEdit}
+                  className="text-xs text-purple-400 hover:text-purple-300 flex items-center gap-1"
+                >
+                  <Edit3 className="w-3 h-3" />
+                  Bearbeiten
+                </button>
+              </div>
             </div>
             <p className="text-sm text-zinc-300 bg-[#1a1325] p-3 rounded-lg border border-purple-500/10">
-              {note.rawTranscript}
+              {showTranslation && translatedText ? translatedText : note.rawTranscript}
             </p>
           </div>
         )}
@@ -476,10 +594,17 @@ export function NoteCard({ note }: NoteCardProps) {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
               </svg>
             </div>
-            <h4 className="text-sm font-semibold text-white">Zusammenfassung</h4>
+            <h4 className="text-sm font-semibold text-white flex items-center gap-2">
+              {showTranslation && translatedSummary ? 'Summary' : 'Zusammenfassung'}
+              {showTranslation && translatedSummary && (
+                <span className="px-2 py-0.5 rounded bg-green-500/20 text-green-400 text-xs">🇬🇧</span>
+              )}
+            </h4>
           </div>
           <p className="text-sm text-zinc-300 leading-relaxed">
-            {note.summary || 'Keine Zusammenfassung verfügbar.'}
+            {showTranslation && translatedSummary
+              ? translatedSummary
+              : (note.summary || 'Keine Zusammenfassung verfügbar.')}
           </p>
         </div>
 
