@@ -3,8 +3,15 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { LANGUAGES, type Language } from '@/types';
 
+interface VoiceCommandCallbacks {
+  onStop?: () => void;
+  onPause?: () => void;
+  onResume?: () => void;
+}
+
 interface UseSpeechRecognitionReturn {
   isRecording: boolean;
+  isPaused: boolean;
   transcript: string;
   interimTranscript: string;
   recordingTime: number;
@@ -12,11 +19,69 @@ interface UseSpeechRecognitionReturn {
   isSupported: boolean;
   startRecording: () => void;
   stopRecording: () => string;
+  pauseRecording: () => void;
+  resumeRecording: () => void;
   resetTranscript: () => void;
 }
 
-export function useSpeechRecognition(language: Language): UseSpeechRecognitionReturn {
+// Wake word variations (how Google might hear "VelaMind")
+const WAKE_WORDS = [
+  'velamind', 'vela mind', 'wella mind', 'mela mind', 'bella mind',
+  'vela', 'wella', 'mela', 'bella', 'vella',
+  'fela mind', 'fella mind', 'fellow mind'
+];
+
+const STOP_WORDS = ['stop', 'stopp', 'beenden', 'ende', 'fertig', 'schluss'];
+const PAUSE_WORDS = ['pause', 'pausieren', 'warte', 'halt'];
+const RESUME_WORDS = ['weiter', 'fortsetzen', 'resume', 'continue', 'los'];
+
+function detectCommand(text: string): 'stop' | 'pause' | 'resume' | null {
+  const lower = text.toLowerCase();
+
+  // Check if any wake word is present
+  let hasWakeWord = false;
+  for (const wake of WAKE_WORDS) {
+    if (lower.includes(wake)) {
+      hasWakeWord = true;
+      break;
+    }
+  }
+
+  if (!hasWakeWord) return null;
+
+  // Check for commands
+  for (const cmd of STOP_WORDS) {
+    if (lower.includes(cmd)) return 'stop';
+  }
+  for (const cmd of PAUSE_WORDS) {
+    if (lower.includes(cmd)) return 'pause';
+  }
+  for (const cmd of RESUME_WORDS) {
+    if (lower.includes(cmd)) return 'resume';
+  }
+
+  return null;
+}
+
+function removeCommandFromText(text: string): string {
+  let result = text;
+
+  // Remove wake words and commands
+  const allWords = [...WAKE_WORDS, ...STOP_WORDS, ...PAUSE_WORDS, ...RESUME_WORDS];
+  for (const word of allWords) {
+    const regex = new RegExp(word + '[.,!?]*\\s*', 'gi');
+    result = result.replace(regex, '');
+  }
+
+  return result.trim();
+}
+
+export function useSpeechRecognition(
+  language: Language,
+  callbacks?: VoiceCommandCallbacks
+): UseSpeechRecognitionReturn {
   const [isRecording, setIsRecording] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
   const [transcript, setTranscript] = useState('');
   const [interimTranscript, setInterimTranscript] = useState('');
   const [recordingTime, setRecordingTime] = useState(0);
@@ -27,15 +92,41 @@ export function useSpeechRecognition(language: Language): UseSpeechRecognitionRe
   const recognitionRef = useRef<any>(null);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const isStoppingRef = useRef(false);
+  const callbacksRef = useRef(callbacks);
+  const commandExecutedRef = useRef(false);
 
   const langConfig = LANGUAGES.find(l => l.code === language);
 
-  // Check browser support
+  useEffect(() => {
+    callbacksRef.current = callbacks;
+  }, [callbacks]);
+
   useEffect(() => {
     if (typeof window !== 'undefined') {
       const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
       setIsSupported(!!SpeechRecognition);
     }
+  }, []);
+
+  const executeCommand = useCallback((command: 'stop' | 'pause' | 'resume') => {
+    // Prevent double execution
+    if (commandExecutedRef.current) return;
+    commandExecutedRef.current = true;
+
+    console.log('🎤 EXECUTING COMMAND:', command);
+
+    if (command === 'stop' && callbacksRef.current?.onStop) {
+      callbacksRef.current.onStop();
+    } else if (command === 'pause' && callbacksRef.current?.onPause) {
+      callbacksRef.current.onPause();
+    } else if (command === 'resume' && callbacksRef.current?.onResume) {
+      callbacksRef.current.onResume();
+    }
+
+    // Reset after delay
+    setTimeout(() => {
+      commandExecutedRef.current = false;
+    }, 2000);
   }, []);
 
   const startRecording = useCallback(() => {
@@ -44,7 +135,6 @@ export function useSpeechRecognition(language: Language): UseSpeechRecognitionRe
       return;
     }
 
-    // Prevent double start
     if (recognitionRef.current) {
       console.log('Recognition already running');
       return;
@@ -54,8 +144,10 @@ export function useSpeechRecognition(language: Language): UseSpeechRecognitionRe
     setTranscript('');
     setInterimTranscript('');
     setRecordingTime(0);
+    setIsPaused(false);
     transcriptRef.current = '';
     isStoppingRef.current = false;
+    commandExecutedRef.current = false;
 
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     const recognition = new SpeechRecognition();
@@ -68,7 +160,6 @@ export function useSpeechRecognition(language: Language): UseSpeechRecognitionRe
       console.log('🎙️ Recording started');
       setIsRecording(true);
 
-      // Start timer
       timerRef.current = setInterval(() => {
         setRecordingTime(prev => prev + 1);
       }, 1000);
@@ -80,10 +171,29 @@ export function useSpeechRecognition(language: Language): UseSpeechRecognitionRe
 
       for (let i = 0; i < event.results.length; i++) {
         const result = event.results[i];
+        const text = result[0].transcript;
+
         if (result.isFinal) {
-          final += result[0].transcript + ' ';
+          // Check for command in final result
+          const command = detectCommand(text);
+          if (command) {
+            console.log('🎤 Command in FINAL:', text, '→', command);
+            const cleanText = removeCommandFromText(text);
+            if (cleanText) final += cleanText + ' ';
+            executeCommand(command);
+          } else {
+            final += text + ' ';
+          }
         } else {
-          interim += result[0].transcript;
+          // Check for command in INTERIM result (for faster response!)
+          const command = detectCommand(text);
+          if (command && !commandExecutedRef.current) {
+            console.log('🎤 Command in INTERIM:', text, '→', command);
+            executeCommand(command);
+            // Don't add command to interim
+          } else {
+            interim += text;
+          }
         }
       }
 
@@ -104,16 +214,18 @@ export function useSpeechRecognition(language: Language): UseSpeechRecognitionRe
     };
 
     recognition.onend = () => {
-      console.log('🎙️ Recognition ended, stopping:', isStoppingRef.current);
+      console.log('🎙️ Recognition ended');
 
-      // Only restart if not intentionally stopping
       if (!isStoppingRef.current && recognitionRef.current) {
-        console.log('🔄 Auto-restarting...');
-        try {
-          recognition.start();
-        } catch (e) {
-          console.log('Could not restart');
-        }
+        setTimeout(() => {
+          try {
+            if (recognitionRef.current && !isStoppingRef.current) {
+              recognition.start();
+            }
+          } catch (e) {
+            console.log('Could not restart');
+          }
+        }, 100);
       }
     };
 
@@ -125,16 +237,16 @@ export function useSpeechRecognition(language: Language): UseSpeechRecognitionRe
       setError('Konnte Spracherkennung nicht starten.');
       recognitionRef.current = null;
     }
-  }, [isSupported, langConfig]);
+  }, [isSupported, langConfig, executeCommand]);
 
   const stopRecording = useCallback((): string => {
     console.log('🛑 Stopping recording...');
     isStoppingRef.current = true;
 
-    // Get final transcript
     const finalTranscript = (transcriptRef.current + ' ' + interimTranscript).trim();
+    // Remove any remaining command words from final transcript
+    const cleanTranscript = removeCommandFromText(finalTranscript);
 
-    // Stop recognition
     if (recognitionRef.current) {
       try {
         recognitionRef.current.stop();
@@ -142,19 +254,55 @@ export function useSpeechRecognition(language: Language): UseSpeechRecognitionRe
       recognitionRef.current = null;
     }
 
-    // Stop timer
     if (timerRef.current) {
       clearInterval(timerRef.current);
       timerRef.current = null;
     }
 
     setIsRecording(false);
-    setTranscript(finalTranscript);
+    setIsPaused(false);
+    setTranscript(cleanTranscript);
     setInterimTranscript('');
 
-    console.log('📝 Final:', finalTranscript.substring(0, 50) + '...');
-    return finalTranscript;
+    console.log('📝 Final:', cleanTranscript.substring(0, 50) + '...');
+    return cleanTranscript;
   }, [interimTranscript]);
+
+  const pauseRecording = useCallback(() => {
+    console.log('⏸️ Pausing...');
+    isStoppingRef.current = true;
+
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch (e) {}
+    }
+
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+
+    setIsPaused(true);
+  }, []);
+
+  const resumeRecording = useCallback(() => {
+    console.log('▶️ Resuming...');
+    setIsPaused(false);
+    isStoppingRef.current = false;
+    commandExecutedRef.current = false;
+
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.start();
+        timerRef.current = setInterval(() => {
+          setRecordingTime(prev => prev + 1);
+        }, 1000);
+      } catch (e) {
+        console.log('Could not resume');
+      }
+    }
+  }, []);
 
   const resetTranscript = useCallback(() => {
     transcriptRef.current = '';
@@ -163,7 +311,6 @@ export function useSpeechRecognition(language: Language): UseSpeechRecognitionRe
     setRecordingTime(0);
   }, []);
 
-  // Cleanup on unmount
   useEffect(() => {
     return () => {
       isStoppingRef.current = true;
@@ -179,6 +326,7 @@ export function useSpeechRecognition(language: Language): UseSpeechRecognitionRe
 
   return {
     isRecording,
+    isPaused,
     transcript,
     interimTranscript,
     recordingTime,
@@ -186,6 +334,8 @@ export function useSpeechRecognition(language: Language): UseSpeechRecognitionRe
     isSupported,
     startRecording,
     stopRecording,
+    pauseRecording,
+    resumeRecording,
     resetTranscript,
   };
 }
