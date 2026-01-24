@@ -65,6 +65,13 @@ export function NoteCard({ note }: NoteCardProps) {
   const [translatedBgSummary, setTranslatedBgSummary] = useState<string | null>(null);
   const [isTranslatingBg, setIsTranslatingBg] = useState(false);
   const [showBgTranslation, setShowBgTranslation] = useState(false);
+  // Translation states - German
+  const [translatedDeText, setTranslatedDeText] = useState<string | null>(null);
+  const [translatedDeSummary, setTranslatedDeSummary] = useState<string | null>(null);
+  const [isTranslatingDe, setIsTranslatingDe] = useState(false);
+  const [showDeTranslation, setShowDeTranslation] = useState(false);
+  // Current speaking language
+  const [speakingLang, setSpeakingLang] = useState<string | null>(null);
   
   const isEditing = isEditingTranscript && editingNoteId === note.id;
 
@@ -160,33 +167,42 @@ export function NoteCard({ note }: NoteCardProps) {
     setEditingTranscript(false, null);
   };
 
-  const handleSpeak = (language: 'original' | 'english' | 'bulgarian' = 'original') => {
+  const handleSpeak = (language: 'original' | 'english' | 'bulgarian' | 'german' = 'original') => {
     if (isSpeaking) {
       speechSynthesis.cancel();
       setIsSpeaking(false);
+      setSpeakingLang(null);
     } else {
       let textToSpeak: string;
       let lang: string;
 
       if (language === 'english' && translatedText) {
-        // Speak translated English version
-        textToSpeak = translatedSummary || translatedText;
+        // Speak translated English transcription
+        textToSpeak = translatedText;
         lang = 'en-US';
       } else if (language === 'bulgarian' && translatedBgText) {
-        // Speak translated Bulgarian version
-        textToSpeak = translatedBgSummary || translatedBgText;
+        // Speak translated Bulgarian transcription
+        textToSpeak = translatedBgText;
         lang = 'bg-BG';
+      } else if (language === 'german' && translatedDeText) {
+        // Speak translated German transcription
+        textToSpeak = translatedDeText;
+        lang = 'de-DE';
       } else {
-        // Speak original language
-        textToSpeak = note.summary || note.rawTranscript;
+        // Speak original transcription
+        textToSpeak = note.rawTranscript;
         lang = note.language === 'de' ? 'de-DE' : note.language === 'bg' ? 'bg-BG' : 'en-US';
       }
 
       const utterance = new SpeechSynthesisUtterance(textToSpeak);
       utterance.lang = lang;
-      utterance.onend = () => setIsSpeaking(false);
+      utterance.onend = () => {
+        setIsSpeaking(false);
+        setSpeakingLang(null);
+      };
       speechSynthesis.speak(utterance);
       setIsSpeaking(true);
+      setSpeakingLang(language);
     }
   };
 
@@ -195,6 +211,7 @@ export function NoteCard({ note }: NoteCardProps) {
       // Toggle translation view
       setShowTranslation(!showTranslation);
       setShowBgTranslation(false);
+      setShowDeTranslation(false);
       return;
     }
 
@@ -210,6 +227,7 @@ export function NoteCard({ note }: NoteCardProps) {
         setTranslatedSummary(note.summary);
         setShowTranslation(true);
         setShowBgTranslation(false);
+        setShowDeTranslation(false);
         setIsTranslating(false);
         return;
       }
@@ -236,6 +254,7 @@ export function NoteCard({ note }: NoteCardProps) {
       setTranslatedSummary(translatedSum);
       setShowTranslation(true);
       setShowBgTranslation(false);
+      setShowDeTranslation(false);
     } catch (error) {
       console.error('Translation error:', error);
       alert('Übersetzung fehlgeschlagen. Bitte versuchen Sie es später erneut.');
@@ -249,6 +268,7 @@ export function NoteCard({ note }: NoteCardProps) {
       // Toggle translation view
       setShowBgTranslation(!showBgTranslation);
       setShowTranslation(false);
+      setShowDeTranslation(false);
       return;
     }
 
@@ -264,6 +284,7 @@ export function NoteCard({ note }: NoteCardProps) {
         setTranslatedBgSummary(note.summary);
         setShowBgTranslation(true);
         setShowTranslation(false);
+        setShowDeTranslation(false);
         setIsTranslatingBg(false);
         return;
       }
@@ -290,11 +311,69 @@ export function NoteCard({ note }: NoteCardProps) {
       setTranslatedBgSummary(translatedSum);
       setShowBgTranslation(true);
       setShowTranslation(false);
+      setShowDeTranslation(false);
     } catch (error) {
       console.error('Bulgarian translation error:', error);
       alert('Превод неуспешен. Моля, опитайте по-късно.');
     } finally {
       setIsTranslatingBg(false);
+    }
+  };
+
+  const handleTranslateGerman = async () => {
+    if (translatedDeText) {
+      // Toggle translation view
+      setShowDeTranslation(!showDeTranslation);
+      setShowTranslation(false);
+      setShowBgTranslation(false);
+      return;
+    }
+
+    setIsTranslatingDe(true);
+
+    try {
+      // Translate transcript
+      const sourceLang = note.language === 'en' ? 'en' : note.language === 'bg' ? 'bg' : 'de';
+      const targetLang = 'de';
+
+      if (sourceLang === targetLang) {
+        setTranslatedDeText(note.rawTranscript);
+        setTranslatedDeSummary(note.summary);
+        setShowDeTranslation(true);
+        setShowTranslation(false);
+        setShowBgTranslation(false);
+        setIsTranslatingDe(false);
+        return;
+      }
+
+      // Use MyMemory free translation API
+      const translateText = async (text: string): Promise<string> => {
+        const response = await fetch(
+          `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=${sourceLang}|${targetLang}`
+        );
+        const data = await response.json();
+        if (data.responseStatus === 200) {
+          return data.responseData.translatedText;
+        }
+        throw new Error('Translation failed');
+      };
+
+      // Translate both transcript and summary
+      const [translated, translatedSum] = await Promise.all([
+        translateText(note.rawTranscript),
+        note.summary ? translateText(note.summary) : Promise.resolve('')
+      ]);
+
+      setTranslatedDeText(translated);
+      setTranslatedDeSummary(translatedSum);
+      setShowDeTranslation(true);
+      setShowTranslation(false);
+      setShowBgTranslation(false);
+    } catch (error) {
+      console.error('German translation error:', error);
+      alert('Übersetzung fehlgeschlagen. Bitte versuchen Sie es später erneut.');
+    } finally {
+      setIsTranslatingDe(false);
     }
   };
 
@@ -530,74 +609,125 @@ export function NoteCard({ note }: NoteCardProps) {
           </div>
         )}
 
-        {/* Action Buttons Row */}
-        <div className="mt-3 flex flex-wrap gap-2">
-          {/* Vorlesen Original */}
-          <button
-            onClick={() => handleSpeak('original')}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-purple-500/20 text-purple-300 text-sm hover:bg-purple-500/30 transition-colors"
-          >
-            {isSpeaking && !showTranslation && !showBgTranslation ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
-            Vorlesen
-          </button>
+        {/* Language Tools Section */}
+        <div className="mt-4 p-3 rounded-lg bg-[#1a1325]/50 border border-purple-500/10">
+          <div className="flex items-center gap-2 mb-3">
+            <Languages className="w-4 h-4 text-purple-400" />
+            <span className="text-xs font-medium text-zinc-400 uppercase tracking-wider">Sprache & Vorlesen</span>
+          </div>
 
-          {/* Translate to English Button */}
-          <button
-            onClick={handleTranslate}
-            disabled={isTranslating}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm transition-colors ${
-              showTranslation
-                ? 'bg-green-500/20 text-green-300 hover:bg-green-500/30'
-                : 'bg-blue-500/20 text-blue-300 hover:bg-blue-500/30'
-            } disabled:opacity-50`}
-          >
-            {isTranslating ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : (
-              <Languages className="w-4 h-4" />
-            )}
-            {isTranslating ? 'Übersetze...' : showTranslation ? '🇬🇧 English ✓' : '🇬🇧 English'}
-          </button>
+          {/* Language Table */}
+          <div className="space-y-2">
+            {/* Original Language Row */}
+            <div className="flex items-center gap-2 p-2 rounded-lg bg-[#241b2f]/50 hover:bg-[#241b2f] transition-colors">
+              <span className="text-lg w-8 text-center">📝</span>
+              <span className="flex-1 text-sm text-zinc-300 font-medium">Original</span>
+              <button
+                onClick={() => handleSpeak('original')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                  isSpeaking && speakingLang === 'original'
+                    ? 'bg-purple-500 text-white'
+                    : 'bg-purple-500/20 text-purple-300 hover:bg-purple-500/30'
+                }`}
+              >
+                {isSpeaking && speakingLang === 'original' ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
+                Vorlesen
+              </button>
+            </div>
 
-          {/* Translate to Bulgarian Button */}
-          <button
-            onClick={handleTranslateBulgarian}
-            disabled={isTranslatingBg}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm transition-colors ${
-              showBgTranslation
-                ? 'bg-orange-500/20 text-orange-300 hover:bg-orange-500/30'
-                : 'bg-cyan-500/20 text-cyan-300 hover:bg-cyan-500/30'
-            } disabled:opacity-50`}
-          >
-            {isTranslatingBg ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : (
-              <Languages className="w-4 h-4" />
-            )}
-            {isTranslatingBg ? 'Превеждам...' : showBgTranslation ? '🇧🇬 Български ✓' : '🇧🇬 Български'}
-          </button>
+            {/* German Row */}
+            <div className="flex items-center gap-2 p-2 rounded-lg bg-[#241b2f]/50 hover:bg-[#241b2f] transition-colors">
+              <span className="text-lg w-8 text-center">🇩🇪</span>
+              <span className="flex-1 text-sm text-zinc-300 font-medium">Deutsch</span>
+              <button
+                onClick={handleTranslateGerman}
+                disabled={isTranslatingDe}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                  showDeTranslation
+                    ? 'bg-yellow-500/30 text-yellow-300'
+                    : 'bg-yellow-500/10 text-yellow-400 hover:bg-yellow-500/20'
+                } disabled:opacity-50`}
+              >
+                {isTranslatingDe ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Languages className="w-3.5 h-3.5" />}
+                {isTranslatingDe ? '...' : showDeTranslation ? 'Aktiv ✓' : 'Übersetzen'}
+              </button>
+              {translatedDeText && (
+                <button
+                  onClick={() => handleSpeak('german')}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                    isSpeaking && speakingLang === 'german'
+                      ? 'bg-yellow-500 text-white'
+                      : 'bg-yellow-500/20 text-yellow-300 hover:bg-yellow-500/30'
+                  }`}
+                >
+                  {isSpeaking && speakingLang === 'german' ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
+                  Vorlesen
+                </button>
+              )}
+            </div>
 
-          {/* Speak English (only when translated) */}
-          {translatedText && (
-            <button
-              onClick={() => handleSpeak('english')}
-              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-green-500/20 text-green-300 text-sm hover:bg-green-500/30 transition-colors"
-            >
-              {isSpeaking && showTranslation ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
-              🇬🇧 Speak English
-            </button>
-          )}
+            {/* English Row */}
+            <div className="flex items-center gap-2 p-2 rounded-lg bg-[#241b2f]/50 hover:bg-[#241b2f] transition-colors">
+              <span className="text-lg w-8 text-center">🇬🇧</span>
+              <span className="flex-1 text-sm text-zinc-300 font-medium">English</span>
+              <button
+                onClick={handleTranslate}
+                disabled={isTranslating}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                  showTranslation
+                    ? 'bg-blue-500/30 text-blue-300'
+                    : 'bg-blue-500/10 text-blue-400 hover:bg-blue-500/20'
+                } disabled:opacity-50`}
+              >
+                {isTranslating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Languages className="w-3.5 h-3.5" />}
+                {isTranslating ? '...' : showTranslation ? 'Active ✓' : 'Translate'}
+              </button>
+              {translatedText && (
+                <button
+                  onClick={() => handleSpeak('english')}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                    isSpeaking && speakingLang === 'english'
+                      ? 'bg-blue-500 text-white'
+                      : 'bg-blue-500/20 text-blue-300 hover:bg-blue-500/30'
+                  }`}
+                >
+                  {isSpeaking && speakingLang === 'english' ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
+                  Speak
+                </button>
+              )}
+            </div>
 
-          {/* Speak Bulgarian (only when translated) */}
-          {translatedBgText && (
-            <button
-              onClick={() => handleSpeak('bulgarian')}
-              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-orange-500/20 text-orange-300 text-sm hover:bg-orange-500/30 transition-colors"
-            >
-              {isSpeaking && showBgTranslation ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
-              🇧🇬 Говори
-            </button>
-          )}
+            {/* Bulgarian Row */}
+            <div className="flex items-center gap-2 p-2 rounded-lg bg-[#241b2f]/50 hover:bg-[#241b2f] transition-colors">
+              <span className="text-lg w-8 text-center">🇧🇬</span>
+              <span className="flex-1 text-sm text-zinc-300 font-medium">Български</span>
+              <button
+                onClick={handleTranslateBulgarian}
+                disabled={isTranslatingBg}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                  showBgTranslation
+                    ? 'bg-orange-500/30 text-orange-300'
+                    : 'bg-orange-500/10 text-orange-400 hover:bg-orange-500/20'
+                } disabled:opacity-50`}
+              >
+                {isTranslatingBg ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Languages className="w-3.5 h-3.5" />}
+                {isTranslatingBg ? '...' : showBgTranslation ? 'Активен ✓' : 'Превод'}
+              </button>
+              {translatedBgText && (
+                <button
+                  onClick={() => handleSpeak('bulgarian')}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                    isSpeaking && speakingLang === 'bulgarian'
+                      ? 'bg-orange-500 text-white'
+                      : 'bg-orange-500/20 text-orange-300 hover:bg-orange-500/30'
+                  }`}
+                >
+                  {isSpeaking && speakingLang === 'bulgarian' ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
+                  Говори
+                </button>
+              )}
+            </div>
+          </div>
         </div>
       </div>
 
@@ -654,16 +784,19 @@ export function NoteCard({ note }: NoteCardProps) {
               <h4 className="text-sm font-semibold text-zinc-400 flex items-center gap-2">
                 Transkription
                 {showTranslation && translatedText && (
-                  <span className="px-2 py-0.5 rounded bg-green-500/20 text-green-400 text-xs">🇬🇧 English</span>
+                  <span className="px-2 py-0.5 rounded bg-blue-500/20 text-blue-400 text-xs">🇬🇧 English</span>
                 )}
                 {showBgTranslation && translatedBgText && (
                   <span className="px-2 py-0.5 rounded bg-orange-500/20 text-orange-400 text-xs">🇧🇬 Български</span>
                 )}
+                {showDeTranslation && translatedDeText && (
+                  <span className="px-2 py-0.5 rounded bg-yellow-500/20 text-yellow-400 text-xs">🇩🇪 Deutsch</span>
+                )}
               </h4>
               <div className="flex items-center gap-2">
-                {(showTranslation || showBgTranslation) && (
+                {(showTranslation || showBgTranslation || showDeTranslation) && (
                   <button
-                    onClick={() => { setShowTranslation(false); setShowBgTranslation(false); }}
+                    onClick={() => { setShowTranslation(false); setShowBgTranslation(false); setShowDeTranslation(false); }}
                     className="text-xs text-blue-400 hover:text-blue-300"
                   >
                     Original anzeigen
@@ -683,7 +816,9 @@ export function NoteCard({ note }: NoteCardProps) {
                 ? translatedText
                 : showBgTranslation && translatedBgText
                   ? translatedBgText
-                  : note.rawTranscript}
+                  : showDeTranslation && translatedDeText
+                    ? translatedDeText
+                    : note.rawTranscript}
             </p>
           </div>
         )}
@@ -701,12 +836,17 @@ export function NoteCard({ note }: NoteCardProps) {
                 ? 'Summary'
                 : showBgTranslation && translatedBgSummary
                   ? 'Резюме'
-                  : 'Zusammenfassung'}
+                  : showDeTranslation && translatedDeSummary
+                    ? 'Zusammenfassung'
+                    : 'Zusammenfassung'}
               {showTranslation && translatedSummary && (
-                <span className="px-2 py-0.5 rounded bg-green-500/20 text-green-400 text-xs">🇬🇧</span>
+                <span className="px-2 py-0.5 rounded bg-blue-500/20 text-blue-400 text-xs">🇬🇧</span>
               )}
               {showBgTranslation && translatedBgSummary && (
                 <span className="px-2 py-0.5 rounded bg-orange-500/20 text-orange-400 text-xs">🇧🇬</span>
+              )}
+              {showDeTranslation && translatedDeSummary && (
+                <span className="px-2 py-0.5 rounded bg-yellow-500/20 text-yellow-400 text-xs">🇩🇪</span>
               )}
             </h4>
           </div>
@@ -715,7 +855,9 @@ export function NoteCard({ note }: NoteCardProps) {
               ? translatedSummary
               : showBgTranslation && translatedBgSummary
                 ? translatedBgSummary
-                : (note.summary || 'Keine Zusammenfassung verfügbar.')}
+                : showDeTranslation && translatedDeSummary
+                  ? translatedDeSummary
+                  : (note.summary || 'Keine Zusammenfassung verfügbar.')}
           </p>
         </div>
 
