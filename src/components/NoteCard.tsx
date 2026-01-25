@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import {
   Edit3,
   Copy,
@@ -21,27 +21,13 @@ import {
   Languages,
   Loader2,
   User,
-  Volume2
+  Volume2,
+  FileText,
+  Download
 } from 'lucide-react';
 import { useAppStore } from '@/lib/store';
 import type { Note } from '@/types';
 import { SPEAKER_COLORS } from '@/types';
-
-// Voice options with male/female voices
-interface VoiceOption {
-  id: string;
-  name: string;
-  gender: 'male' | 'female';
-  icon: string;
-}
-
-const VOICE_OPTIONS: VoiceOption[] = [
-  { id: 'default', name: 'Standard', gender: 'male', icon: '🎙️' },
-  { id: 'male1', name: 'Mann 1', gender: 'male', icon: '👨' },
-  { id: 'male2', name: 'Mann 2', gender: 'male', icon: '👨‍💼' },
-  { id: 'female1', name: 'Frau 1', gender: 'female', icon: '👩' },
-  { id: 'female2', name: 'Frau 2', gender: 'female', icon: '👩‍💼' },
-];
 
 interface NoteCardProps {
   note: Note;
@@ -90,8 +76,8 @@ export function NoteCard({ note }: NoteCardProps) {
   const [showDeTranslation, setShowDeTranslation] = useState(false);
   // Current speaking language
   const [speakingLang, setSpeakingLang] = useState<string | null>(null);
-  // Voice selection
-  const [selectedVoice, setSelectedVoice] = useState<string>('default');
+  // Voice selection - store actual voice name
+  const [selectedVoiceName, setSelectedVoiceName] = useState<string>('');
   const [availableVoices, setAvailableVoices] = useState<SpeechSynthesisVoice[]>([]);
   const [showVoiceSelector, setShowVoiceSelector] = useState(false);
   // Summary editing
@@ -105,6 +91,11 @@ export function NoteCard({ note }: NoteCardProps) {
     const loadVoices = () => {
       const voices = speechSynthesis.getVoices();
       setAvailableVoices(voices);
+      // Set default voice if not set
+      if (!selectedVoiceName && voices.length > 0) {
+        const defaultVoice = voices.find(v => v.default) || voices[0];
+        setSelectedVoiceName(defaultVoice.name);
+      }
     };
 
     loadVoices();
@@ -113,43 +104,38 @@ export function NoteCard({ note }: NoteCardProps) {
     return () => {
       speechSynthesis.onvoiceschanged = null;
     };
-  }, []);
+  }, [selectedVoiceName]);
 
-  // Get voice by selection and language
-  const getVoiceForLanguage = (langCode: string): SpeechSynthesisVoice | null => {
-    if (availableVoices.length === 0) return null;
+  // Group voices by language for display
+  const groupedVoices = useMemo(() => {
+    const groups: { [key: string]: SpeechSynthesisVoice[] } = {
+      'de': [],
+      'en': [],
+      'bg': [],
+      'other': []
+    };
 
-    const voiceOption = VOICE_OPTIONS.find(v => v.id === selectedVoice);
-    const isFemale = voiceOption?.gender === 'female';
+    availableVoices.forEach(voice => {
+      const lang = voice.lang.split('-')[0].toLowerCase();
+      if (groups[lang]) {
+        groups[lang].push(voice);
+      } else {
+        groups['other'].push(voice);
+      }
+    });
 
-    // Filter voices by language
-    const langVoices = availableVoices.filter(v => v.lang.startsWith(langCode.split('-')[0]));
+    return groups;
+  }, [availableVoices]);
 
-    if (langVoices.length === 0) return null;
+  // Get the selected voice object
+  const getSelectedVoice = (): SpeechSynthesisVoice | null => {
+    return availableVoices.find(v => v.name === selectedVoiceName) || null;
+  };
 
-    // Try to find male/female voice based on name patterns
-    const femalePatterns = ['female', 'woman', 'frau', 'zira', 'helena', 'sabina', 'iveta', 'anna', 'linda', 'susan', 'karen', 'victoria', 'samantha'];
-    const malePatterns = ['male', 'man', 'mann', 'david', 'mark', 'daniel', 'george', 'james', 'richard', 'stefan'];
-
-    let filteredVoices = langVoices;
-
-    if (isFemale) {
-      const femaleVoices = langVoices.filter(v =>
-        femalePatterns.some(p => v.name.toLowerCase().includes(p))
-      );
-      if (femaleVoices.length > 0) filteredVoices = femaleVoices;
-    } else {
-      const maleVoices = langVoices.filter(v =>
-        malePatterns.some(p => v.name.toLowerCase().includes(p))
-      );
-      if (maleVoices.length > 0) filteredVoices = maleVoices;
-    }
-
-    // Select based on voice option index
-    const voiceIndex = VOICE_OPTIONS.findIndex(v => v.id === selectedVoice);
-    const adjustedIndex = Math.min(voiceIndex, filteredVoices.length - 1);
-
-    return filteredVoices[adjustedIndex] || langVoices[0];
+  // Detect if voice is likely female based on name
+  const isFemalVoice = (name: string): boolean => {
+    const femalePatterns = ['female', 'woman', 'frau', 'zira', 'helena', 'sabina', 'iveta', 'anna', 'linda', 'susan', 'karen', 'victoria', 'samantha', 'sara', 'marie', 'julia', 'emma', 'sophia', 'lisa', 'eva', 'nina', 'kate', 'alice'];
+    return femalePatterns.some(p => name.toLowerCase().includes(p));
   };
 
   const formatDate = (date: Date | string) => {
@@ -274,18 +260,10 @@ export function NoteCard({ note }: NoteCardProps) {
       const utterance = new SpeechSynthesisUtterance(textToSpeak);
       utterance.lang = lang;
 
-      // Apply selected voice
-      const voice = getVoiceForLanguage(lang);
+      // Apply selected voice directly
+      const voice = getSelectedVoice();
       if (voice) {
         utterance.voice = voice;
-      }
-
-      // Adjust pitch for male/female
-      const voiceOption = VOICE_OPTIONS.find(v => v.id === selectedVoice);
-      if (voiceOption?.gender === 'female') {
-        utterance.pitch = 1.1;
-      } else if (voiceOption?.gender === 'male') {
-        utterance.pitch = 0.9;
       }
 
       utterance.onend = () => {
@@ -296,6 +274,34 @@ export function NoteCard({ note }: NoteCardProps) {
       setIsSpeaking(true);
       setSpeakingLang(language);
     }
+  };
+
+  // Export to PDF
+  const handleExportPDF = async () => {
+    const content = `
+${note.title}
+${'='.repeat(note.title.length)}
+
+Datum: ${formatDate(note.createdAt)}
+Stimmung: ${note.sentiment}
+
+TRANSKRIPTION:
+${note.rawTranscript}
+
+ZUSAMMENFASSUNG:
+${note.summary || 'Keine Zusammenfassung verfügbar.'}
+    `.trim();
+
+    // Create blob and download
+    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${note.title.replace(/[^a-z0-9]/gi, '_')}_${new Date().toISOString().split('T')[0]}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   };
 
   const handleSaveSummary = () => {
@@ -726,40 +732,125 @@ export function NoteCard({ note }: NoteCardProps) {
                 className="flex items-center gap-2 px-3 py-1.5 rounded-md bg-[#241b2f] border border-purple-500/20 text-xs text-zinc-300 hover:border-purple-500/40 transition-colors"
               >
                 <Volume2 className="w-3.5 h-3.5" />
-                <span>{VOICE_OPTIONS.find(v => v.id === selectedVoice)?.icon}</span>
-                <span>{VOICE_OPTIONS.find(v => v.id === selectedVoice)?.name}</span>
+                <span>{isFemalVoice(selectedVoiceName) ? '👩' : '👨'}</span>
+                <span className="max-w-24 truncate">{selectedVoiceName || 'Stimme...'}</span>
                 <ChevronDown className={`w-3 h-3 transition-transform ${showVoiceSelector ? 'rotate-180' : ''}`} />
               </button>
 
               {showVoiceSelector && (
-                <div className="absolute right-0 top-full mt-1 z-20 w-48 p-2 rounded-lg bg-[#1a1325] border border-purple-500/20 shadow-xl">
-                  <p className="text-xs text-zinc-500 mb-2 px-2">Stimme wählen:</p>
-                  {VOICE_OPTIONS.map((voice) => (
-                    <button
-                      key={voice.id}
-                      onClick={() => {
-                        setSelectedVoice(voice.id);
-                        setShowVoiceSelector(false);
-                      }}
-                      className={`w-full flex items-center gap-2 px-3 py-2 rounded-md text-xs transition-colors ${
-                        selectedVoice === voice.id
-                          ? 'bg-purple-500/20 text-purple-300'
-                          : 'text-zinc-400 hover:bg-[#241b2f] hover:text-white'
-                      }`}
-                    >
-                      <span className="text-base">{voice.icon}</span>
-                      <span className="flex-1 text-left">{voice.name}</span>
-                      <span className={`text-[10px] px-1.5 py-0.5 rounded ${
-                        voice.gender === 'female' ? 'bg-pink-500/20 text-pink-400' : 'bg-blue-500/20 text-blue-400'
-                      }`}>
-                        {voice.gender === 'female' ? 'W' : 'M'}
-                      </span>
-                      {selectedVoice === voice.id && <Check className="w-3 h-3 text-purple-400" />}
-                    </button>
-                  ))}
+                <div className="absolute right-0 top-full mt-1 z-20 w-72 max-h-80 overflow-y-auto p-2 rounded-lg bg-[#1a1325] border border-purple-500/20 shadow-xl">
+                  {/* German Voices */}
+                  {groupedVoices['de'].length > 0 && (
+                    <>
+                      <p className="text-xs text-zinc-500 mb-1 px-2 pt-1 flex items-center gap-1">🇩🇪 Deutsch</p>
+                      {groupedVoices['de'].map((voice) => (
+                        <button
+                          key={voice.name}
+                          onClick={() => {
+                            setSelectedVoiceName(voice.name);
+                            setShowVoiceSelector(false);
+                          }}
+                          className={`w-full flex items-center gap-2 px-3 py-1.5 rounded-md text-xs transition-colors ${
+                            selectedVoiceName === voice.name
+                              ? 'bg-purple-500/20 text-purple-300'
+                              : 'text-zinc-400 hover:bg-[#241b2f] hover:text-white'
+                          }`}
+                        >
+                          <span>{isFemalVoice(voice.name) ? '👩' : '👨'}</span>
+                          <span className="flex-1 text-left truncate">{voice.name}</span>
+                          {selectedVoiceName === voice.name && <Check className="w-3 h-3 text-purple-400" />}
+                        </button>
+                      ))}
+                    </>
+                  )}
+
+                  {/* English Voices */}
+                  {groupedVoices['en'].length > 0 && (
+                    <>
+                      <p className="text-xs text-zinc-500 mb-1 px-2 pt-2 flex items-center gap-1">🇬🇧 English</p>
+                      {groupedVoices['en'].map((voice) => (
+                        <button
+                          key={voice.name}
+                          onClick={() => {
+                            setSelectedVoiceName(voice.name);
+                            setShowVoiceSelector(false);
+                          }}
+                          className={`w-full flex items-center gap-2 px-3 py-1.5 rounded-md text-xs transition-colors ${
+                            selectedVoiceName === voice.name
+                              ? 'bg-purple-500/20 text-purple-300'
+                              : 'text-zinc-400 hover:bg-[#241b2f] hover:text-white'
+                          }`}
+                        >
+                          <span>{isFemalVoice(voice.name) ? '👩' : '👨'}</span>
+                          <span className="flex-1 text-left truncate">{voice.name}</span>
+                          {selectedVoiceName === voice.name && <Check className="w-3 h-3 text-purple-400" />}
+                        </button>
+                      ))}
+                    </>
+                  )}
+
+                  {/* Bulgarian Voices */}
+                  {groupedVoices['bg'].length > 0 && (
+                    <>
+                      <p className="text-xs text-zinc-500 mb-1 px-2 pt-2 flex items-center gap-1">🇧🇬 Български</p>
+                      {groupedVoices['bg'].map((voice) => (
+                        <button
+                          key={voice.name}
+                          onClick={() => {
+                            setSelectedVoiceName(voice.name);
+                            setShowVoiceSelector(false);
+                          }}
+                          className={`w-full flex items-center gap-2 px-3 py-1.5 rounded-md text-xs transition-colors ${
+                            selectedVoiceName === voice.name
+                              ? 'bg-purple-500/20 text-purple-300'
+                              : 'text-zinc-400 hover:bg-[#241b2f] hover:text-white'
+                          }`}
+                        >
+                          <span>{isFemalVoice(voice.name) ? '👩' : '👨'}</span>
+                          <span className="flex-1 text-left truncate">{voice.name}</span>
+                          {selectedVoiceName === voice.name && <Check className="w-3 h-3 text-purple-400" />}
+                        </button>
+                      ))}
+                    </>
+                  )}
+
+                  {/* Other Voices */}
+                  {groupedVoices['other'].length > 0 && (
+                    <>
+                      <p className="text-xs text-zinc-500 mb-1 px-2 pt-2 flex items-center gap-1">🌍 Andere</p>
+                      {groupedVoices['other'].slice(0, 5).map((voice) => (
+                        <button
+                          key={voice.name}
+                          onClick={() => {
+                            setSelectedVoiceName(voice.name);
+                            setShowVoiceSelector(false);
+                          }}
+                          className={`w-full flex items-center gap-2 px-3 py-1.5 rounded-md text-xs transition-colors ${
+                            selectedVoiceName === voice.name
+                              ? 'bg-purple-500/20 text-purple-300'
+                              : 'text-zinc-400 hover:bg-[#241b2f] hover:text-white'
+                          }`}
+                        >
+                          <span>{isFemalVoice(voice.name) ? '👩' : '👨'}</span>
+                          <span className="flex-1 text-left truncate">{voice.name}</span>
+                          {selectedVoiceName === voice.name && <Check className="w-3 h-3 text-purple-400" />}
+                        </button>
+                      ))}
+                    </>
+                  )}
                 </div>
               )}
             </div>
+
+            {/* Export Button */}
+            <button
+              onClick={handleExportPDF}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-[#241b2f] border border-purple-500/20 text-xs text-zinc-300 hover:border-purple-500/40 transition-colors"
+              title="Als Textdatei exportieren"
+            >
+              <Download className="w-3.5 h-3.5" />
+              Export
+            </button>
           </div>
 
           {/* Language Table */}
