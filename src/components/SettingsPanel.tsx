@@ -18,13 +18,14 @@ import { useAppStore } from '@/lib/store';
 import { LANGUAGES } from '@/types';
 
 export function SettingsPanel() {
-  const { 
-    user, 
-    voiceCommandsEnabled, 
+  const {
+    user,
+    voiceCommandsEnabled,
     toggleVoiceCommands,
     offlineMode,
     toggleOfflineMode,
     auditLog,
+    clearAuditLog,
     notes,
     currentLanguage,
     setCurrentLanguage,
@@ -244,16 +245,42 @@ export function SettingsPanel() {
       {/* Audit Log */}
       {activeTab === 'audit' && (
         <div className="space-y-4">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between flex-wrap gap-2">
             <p className="text-sm text-zinc-400">
-              Letzte {Math.min(auditLog.length, 50)} Aktivitäten
+              {auditLog.length} Aktivitäten
             </p>
-            <button
-              onClick={exportData}
-              className="text-xs text-purple-400 hover:text-purple-300"
-            >
-              Als CSV exportieren
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => {
+                  if (confirm('Einträge älter als 1 Tag löschen?')) clearAuditLog('day');
+                }}
+                className="px-2 py-1 text-xs bg-yellow-500/10 text-yellow-400 rounded hover:bg-yellow-500/20"
+              >
+                &gt; 1 Tag
+              </button>
+              <button
+                onClick={() => {
+                  if (confirm('Einträge älter als 1 Monat löschen?')) clearAuditLog('month');
+                }}
+                className="px-2 py-1 text-xs bg-orange-500/10 text-orange-400 rounded hover:bg-orange-500/20"
+              >
+                &gt; 1 Monat
+              </button>
+              <button
+                onClick={() => {
+                  if (confirm('Alle Audit-Log Einträge löschen?')) clearAuditLog('all');
+                }}
+                className="px-2 py-1 text-xs bg-red-500/10 text-red-400 rounded hover:bg-red-500/20"
+              >
+                Alle löschen
+              </button>
+              <button
+                onClick={exportData}
+                className="px-2 py-1 text-xs bg-purple-500/10 text-purple-400 rounded hover:bg-purple-500/20"
+              >
+                Export
+              </button>
+            </div>
           </div>
 
           <div className="bg-[#1a1325] rounded-xl border border-purple-500/10 overflow-hidden">

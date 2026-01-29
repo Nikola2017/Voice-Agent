@@ -83,6 +83,8 @@ export function NoteCard({ note }: NoteCardProps) {
   // Summary editing
   const [isEditingSummary, setIsEditingSummary] = useState(false);
   const [editedSummary, setEditedSummary] = useState(note.summary || '');
+  // Language tools collapse
+  const [showLanguageTools, setShowLanguageTools] = useState(false);
 
   const isEditing = isEditingTranscript && editingNoteId === note.id;
 
@@ -98,11 +100,16 @@ export function NoteCard({ note }: NoteCardProps) {
       }
     };
 
+    // Load voices immediately and also on change
     loadVoices();
-    speechSynthesis.onvoiceschanged = loadVoices;
+    if (typeof window !== 'undefined' && window.speechSynthesis) {
+      speechSynthesis.onvoiceschanged = loadVoices;
+    }
 
     return () => {
-      speechSynthesis.onvoiceschanged = null;
+      if (typeof window !== 'undefined' && window.speechSynthesis) {
+        speechSynthesis.onvoiceschanged = null;
+      }
     };
   }, [selectedVoiceName]);
 
@@ -314,6 +321,71 @@ ${note.summary || 'Keine Zusammenfassung verfügbar.'}
     setIsEditingSummary(false);
   };
 
+  // Helper function to translate text in chunks (MyMemory limit is ~500 chars)
+  const translateInChunks = async (text: string, sourceLang: string, targetLang: string): Promise<string> => {
+    const CHUNK_SIZE = 400; // Safe limit for MyMemory API
+
+    // If text is small enough, translate directly
+    if (text.length <= CHUNK_SIZE) {
+      const response = await fetch(
+        `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=${sourceLang}|${targetLang}`
+      );
+      const data = await response.json();
+      if (data.responseStatus === 200) {
+        return data.responseData.translatedText;
+      }
+      throw new Error('Translation failed');
+    }
+
+    // Split text into sentences or chunks
+    const sentences = text.match(/[^.!?]+[.!?]+|[^.!?]+$/g) || [text];
+    const chunks: string[] = [];
+    let currentChunk = '';
+
+    for (const sentence of sentences) {
+      if ((currentChunk + sentence).length <= CHUNK_SIZE) {
+        currentChunk += sentence;
+      } else {
+        if (currentChunk) chunks.push(currentChunk.trim());
+        // If single sentence is too long, split by words
+        if (sentence.length > CHUNK_SIZE) {
+          const words = sentence.split(' ');
+          currentChunk = '';
+          for (const word of words) {
+            if ((currentChunk + ' ' + word).length <= CHUNK_SIZE) {
+              currentChunk += (currentChunk ? ' ' : '') + word;
+            } else {
+              if (currentChunk) chunks.push(currentChunk.trim());
+              currentChunk = word;
+            }
+          }
+        } else {
+          currentChunk = sentence;
+        }
+      }
+    }
+    if (currentChunk) chunks.push(currentChunk.trim());
+
+    // Translate each chunk with delay to avoid rate limiting
+    const translatedChunks: string[] = [];
+    for (let i = 0; i < chunks.length; i++) {
+      const chunk = chunks[i];
+      if (i > 0) await new Promise(r => setTimeout(r, 300)); // Small delay between requests
+
+      const response = await fetch(
+        `https://api.mymemory.translated.net/get?q=${encodeURIComponent(chunk)}&langpair=${sourceLang}|${targetLang}`
+      );
+      const data = await response.json();
+      if (data.responseStatus === 200) {
+        translatedChunks.push(data.responseData.translatedText);
+      } else {
+        throw new Error(`Translation failed for chunk ${i + 1}`);
+      }
+    }
+
+    return translatedChunks.join(' ');
+  };
+
   const handleTranslate = async () => {
     if (translatedText) {
       // Toggle translation view
@@ -326,7 +398,6 @@ ${note.summary || 'Keine Zusammenfassung verfügbar.'}
     setIsTranslating(true);
 
     try {
-      // Translate transcript
       const sourceLang = note.language === 'de' ? 'de' : note.language === 'bg' ? 'bg' : 'en';
       const targetLang = 'en';
 
@@ -340,22 +411,10 @@ ${note.summary || 'Keine Zusammenfassung verfügbar.'}
         return;
       }
 
-      // Use MyMemory free translation API
-      const translateText = async (text: string): Promise<string> => {
-        const response = await fetch(
-          `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=${sourceLang}|${targetLang}`
-        );
-        const data = await response.json();
-        if (data.responseStatus === 200) {
-          return data.responseData.translatedText;
-        }
-        throw new Error('Translation failed');
-      };
-
-      // Translate both transcript and summary
+      // Translate using chunked method
       const [translated, translatedSum] = await Promise.all([
-        translateText(note.rawTranscript),
-        note.summary ? translateText(note.summary) : Promise.resolve('')
+        translateInChunks(note.rawTranscript, sourceLang, targetLang),
+        note.summary ? translateInChunks(note.summary, sourceLang, targetLang) : Promise.resolve('')
       ]);
 
       setTranslatedText(translated);
@@ -365,7 +424,7 @@ ${note.summary || 'Keine Zusammenfassung verfügbar.'}
       setShowDeTranslation(false);
     } catch (error) {
       console.error('Translation error:', error);
-      alert('Übersetzung fehlgeschlagen. Bitte versuchen Sie es später erneut.');
+      alert('Übersetzung fehlgeschlagen. Text zu lang oder API-Limit erreicht.');
     } finally {
       setIsTranslating(false);
     }
@@ -373,7 +432,6 @@ ${note.summary || 'Keine Zusammenfassung verfügbar.'}
 
   const handleTranslateBulgarian = async () => {
     if (translatedBgText) {
-      // Toggle translation view
       setShowBgTranslation(!showBgTranslation);
       setShowTranslation(false);
       setShowDeTranslation(false);
@@ -383,7 +441,6 @@ ${note.summary || 'Keine Zusammenfassung verfügbar.'}
     setIsTranslatingBg(true);
 
     try {
-      // Translate transcript
       const sourceLang = note.language === 'de' ? 'de' : note.language === 'en' ? 'en' : 'bg';
       const targetLang = 'bg';
 
@@ -397,22 +454,9 @@ ${note.summary || 'Keine Zusammenfassung verfügbar.'}
         return;
       }
 
-      // Use MyMemory free translation API
-      const translateText = async (text: string): Promise<string> => {
-        const response = await fetch(
-          `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=${sourceLang}|${targetLang}`
-        );
-        const data = await response.json();
-        if (data.responseStatus === 200) {
-          return data.responseData.translatedText;
-        }
-        throw new Error('Translation failed');
-      };
-
-      // Translate both transcript and summary
       const [translated, translatedSum] = await Promise.all([
-        translateText(note.rawTranscript),
-        note.summary ? translateText(note.summary) : Promise.resolve('')
+        translateInChunks(note.rawTranscript, sourceLang, targetLang),
+        note.summary ? translateInChunks(note.summary, sourceLang, targetLang) : Promise.resolve('')
       ]);
 
       setTranslatedBgText(translated);
@@ -422,7 +466,7 @@ ${note.summary || 'Keine Zusammenfassung verfügbar.'}
       setShowDeTranslation(false);
     } catch (error) {
       console.error('Bulgarian translation error:', error);
-      alert('Превод неуспешен. Моля, опитайте по-късно.');
+      alert('Превод неуспешен. Текстът е твърде дълъг.');
     } finally {
       setIsTranslatingBg(false);
     }
@@ -430,7 +474,6 @@ ${note.summary || 'Keine Zusammenfassung verfügbar.'}
 
   const handleTranslateGerman = async () => {
     if (translatedDeText) {
-      // Toggle translation view
       setShowDeTranslation(!showDeTranslation);
       setShowTranslation(false);
       setShowBgTranslation(false);
@@ -440,7 +483,6 @@ ${note.summary || 'Keine Zusammenfassung verfügbar.'}
     setIsTranslatingDe(true);
 
     try {
-      // Translate transcript
       const sourceLang = note.language === 'en' ? 'en' : note.language === 'bg' ? 'bg' : 'de';
       const targetLang = 'de';
 
@@ -454,22 +496,9 @@ ${note.summary || 'Keine Zusammenfassung verfügbar.'}
         return;
       }
 
-      // Use MyMemory free translation API
-      const translateText = async (text: string): Promise<string> => {
-        const response = await fetch(
-          `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=${sourceLang}|${targetLang}`
-        );
-        const data = await response.json();
-        if (data.responseStatus === 200) {
-          return data.responseData.translatedText;
-        }
-        throw new Error('Translation failed');
-      };
-
-      // Translate both transcript and summary
       const [translated, translatedSum] = await Promise.all([
-        translateText(note.rawTranscript),
-        note.summary ? translateText(note.summary) : Promise.resolve('')
+        translateInChunks(note.rawTranscript, sourceLang, targetLang),
+        note.summary ? translateInChunks(note.summary, sourceLang, targetLang) : Promise.resolve('')
       ]);
 
       setTranslatedDeText(translated);
@@ -479,7 +508,7 @@ ${note.summary || 'Keine Zusammenfassung verfügbar.'}
       setShowBgTranslation(false);
     } catch (error) {
       console.error('German translation error:', error);
-      alert('Übersetzung fehlgeschlagen. Bitte versuchen Sie es später erneut.');
+      alert('Übersetzung fehlgeschlagen. Text zu lang.');
     } finally {
       setIsTranslatingDe(false);
     }
@@ -717,255 +746,150 @@ ${note.summary || 'Keine Zusammenfassung verfügbar.'}
           </div>
         )}
 
-        {/* Language Tools Section */}
-        <div className="mt-4 p-3 rounded-lg bg-[#1a1325]/50 border border-purple-500/10">
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2">
-              <Languages className="w-4 h-4 text-purple-400" />
-              <span className="text-xs font-medium text-zinc-400 uppercase tracking-wider">Sprache & Vorlesen</span>
-            </div>
+        {/* Compact Language Tools */}
+        <div className="mt-3 flex items-center gap-2 flex-wrap">
+          {/* Vorlesen Original */}
+          <button
+            onClick={() => handleSpeak('original')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+              isSpeaking && speakingLang === 'original'
+                ? 'bg-purple-500 text-white'
+                : 'bg-purple-500/20 text-purple-300 hover:bg-purple-500/30'
+            }`}
+          >
+            {isSpeaking && speakingLang === 'original' ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
+            Vorlesen
+          </button>
 
-            {/* Voice Selector */}
-            <div className="relative">
-              <button
-                onClick={() => setShowVoiceSelector(!showVoiceSelector)}
-                className="flex items-center gap-2 px-3 py-1.5 rounded-md bg-[#241b2f] border border-purple-500/20 text-xs text-zinc-300 hover:border-purple-500/40 transition-colors"
-              >
-                <Volume2 className="w-3.5 h-3.5" />
-                <span>{isFemalVoice(selectedVoiceName) ? '👩' : '👨'}</span>
-                <span className="max-w-24 truncate">{selectedVoiceName || 'Stimme...'}</span>
-                <ChevronDown className={`w-3 h-3 transition-transform ${showVoiceSelector ? 'rotate-180' : ''}`} />
-              </button>
-
-              {showVoiceSelector && (
-                <div className="absolute right-0 top-full mt-1 z-20 w-72 max-h-80 overflow-y-auto p-2 rounded-lg bg-[#1a1325] border border-purple-500/20 shadow-xl">
-                  {/* German Voices */}
-                  {groupedVoices['de'].length > 0 && (
-                    <>
-                      <p className="text-xs text-zinc-500 mb-1 px-2 pt-1 flex items-center gap-1">🇩🇪 Deutsch</p>
-                      {groupedVoices['de'].map((voice) => (
-                        <button
-                          key={voice.name}
-                          onClick={() => {
-                            setSelectedVoiceName(voice.name);
-                            setShowVoiceSelector(false);
-                          }}
-                          className={`w-full flex items-center gap-2 px-3 py-1.5 rounded-md text-xs transition-colors ${
-                            selectedVoiceName === voice.name
-                              ? 'bg-purple-500/20 text-purple-300'
-                              : 'text-zinc-400 hover:bg-[#241b2f] hover:text-white'
-                          }`}
-                        >
-                          <span>{isFemalVoice(voice.name) ? '👩' : '👨'}</span>
-                          <span className="flex-1 text-left truncate">{voice.name}</span>
-                          {selectedVoiceName === voice.name && <Check className="w-3 h-3 text-purple-400" />}
-                        </button>
-                      ))}
-                    </>
-                  )}
-
-                  {/* English Voices */}
-                  {groupedVoices['en'].length > 0 && (
-                    <>
-                      <p className="text-xs text-zinc-500 mb-1 px-2 pt-2 flex items-center gap-1">🇬🇧 English</p>
-                      {groupedVoices['en'].map((voice) => (
-                        <button
-                          key={voice.name}
-                          onClick={() => {
-                            setSelectedVoiceName(voice.name);
-                            setShowVoiceSelector(false);
-                          }}
-                          className={`w-full flex items-center gap-2 px-3 py-1.5 rounded-md text-xs transition-colors ${
-                            selectedVoiceName === voice.name
-                              ? 'bg-purple-500/20 text-purple-300'
-                              : 'text-zinc-400 hover:bg-[#241b2f] hover:text-white'
-                          }`}
-                        >
-                          <span>{isFemalVoice(voice.name) ? '👩' : '👨'}</span>
-                          <span className="flex-1 text-left truncate">{voice.name}</span>
-                          {selectedVoiceName === voice.name && <Check className="w-3 h-3 text-purple-400" />}
-                        </button>
-                      ))}
-                    </>
-                  )}
-
-                  {/* Bulgarian Voices */}
-                  {groupedVoices['bg'].length > 0 && (
-                    <>
-                      <p className="text-xs text-zinc-500 mb-1 px-2 pt-2 flex items-center gap-1">🇧🇬 Български</p>
-                      {groupedVoices['bg'].map((voice) => (
-                        <button
-                          key={voice.name}
-                          onClick={() => {
-                            setSelectedVoiceName(voice.name);
-                            setShowVoiceSelector(false);
-                          }}
-                          className={`w-full flex items-center gap-2 px-3 py-1.5 rounded-md text-xs transition-colors ${
-                            selectedVoiceName === voice.name
-                              ? 'bg-purple-500/20 text-purple-300'
-                              : 'text-zinc-400 hover:bg-[#241b2f] hover:text-white'
-                          }`}
-                        >
-                          <span>{isFemalVoice(voice.name) ? '👩' : '👨'}</span>
-                          <span className="flex-1 text-left truncate">{voice.name}</span>
-                          {selectedVoiceName === voice.name && <Check className="w-3 h-3 text-purple-400" />}
-                        </button>
-                      ))}
-                    </>
-                  )}
-
-                  {/* Other Voices */}
-                  {groupedVoices['other'].length > 0 && (
-                    <>
-                      <p className="text-xs text-zinc-500 mb-1 px-2 pt-2 flex items-center gap-1">🌍 Andere</p>
-                      {groupedVoices['other'].slice(0, 5).map((voice) => (
-                        <button
-                          key={voice.name}
-                          onClick={() => {
-                            setSelectedVoiceName(voice.name);
-                            setShowVoiceSelector(false);
-                          }}
-                          className={`w-full flex items-center gap-2 px-3 py-1.5 rounded-md text-xs transition-colors ${
-                            selectedVoiceName === voice.name
-                              ? 'bg-purple-500/20 text-purple-300'
-                              : 'text-zinc-400 hover:bg-[#241b2f] hover:text-white'
-                          }`}
-                        >
-                          <span>{isFemalVoice(voice.name) ? '👩' : '👨'}</span>
-                          <span className="flex-1 text-left truncate">{voice.name}</span>
-                          {selectedVoiceName === voice.name && <Check className="w-3 h-3 text-purple-400" />}
-                        </button>
-                      ))}
-                    </>
-                  )}
-                </div>
-              )}
-            </div>
-
-            {/* Export Button */}
+          {/* Voice Selector - Compact */}
+          <div className="relative">
             <button
-              onClick={handleExportPDF}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-[#241b2f] border border-purple-500/20 text-xs text-zinc-300 hover:border-purple-500/40 transition-colors"
-              title="Als Textdatei exportieren"
+              onClick={() => setShowVoiceSelector(!showVoiceSelector)}
+              className="flex items-center gap-1.5 px-2 py-1.5 rounded-md bg-[#241b2f] border border-purple-500/20 text-xs text-zinc-400 hover:border-purple-500/40 transition-colors"
+              title="Stimme wählen"
             >
-              <Download className="w-3.5 h-3.5" />
-              Export
+              <Volume2 className="w-3.5 h-3.5" />
+              <span>{isFemalVoice(selectedVoiceName) ? '👩' : '👨'}</span>
             </button>
+
+            {showVoiceSelector && (
+              <div className="absolute left-0 top-full mt-1 z-20 w-64 max-h-60 overflow-y-auto p-2 rounded-lg bg-[#1a1325] border border-purple-500/20 shadow-xl">
+                <p className="text-xs text-zinc-500 mb-2 px-2">Stimme wählen:</p>
+                {[...groupedVoices['de'], ...groupedVoices['en'], ...groupedVoices['bg']].slice(0, 10).map((voice) => (
+                  <button
+                    key={voice.name}
+                    onClick={() => {
+                      setSelectedVoiceName(voice.name);
+                      setShowVoiceSelector(false);
+                    }}
+                    className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs transition-colors ${
+                      selectedVoiceName === voice.name
+                        ? 'bg-purple-500/20 text-purple-300'
+                        : 'text-zinc-400 hover:bg-[#241b2f] hover:text-white'
+                    }`}
+                  >
+                    <span>{isFemalVoice(voice.name) ? '👩' : '👨'}</span>
+                    <span className="flex-1 text-left truncate">{voice.name}</span>
+                    {selectedVoiceName === voice.name && <Check className="w-3 h-3" />}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
 
-          {/* Language Table */}
-          <div className="space-y-2">
-            {/* Original Language Row */}
-            <div className="flex items-center gap-2 p-2 rounded-lg bg-[#241b2f]/50 hover:bg-[#241b2f] transition-colors">
-              <span className="text-lg w-8 text-center">📝</span>
-              <span className="flex-1 text-sm text-zinc-300 font-medium">Original</span>
+          {/* Language Toggle Button */}
+          <button
+            onClick={() => setShowLanguageTools(!showLanguageTools)}
+            className={`flex items-center gap-1.5 px-2 py-1.5 rounded-md text-xs transition-colors ${
+              showLanguageTools
+                ? 'bg-blue-500/20 text-blue-300'
+                : 'bg-zinc-700/50 text-zinc-400 hover:text-white'
+            }`}
+          >
+            <Languages className="w-3.5 h-3.5" />
+            <ChevronDown className={`w-3 h-3 transition-transform ${showLanguageTools ? 'rotate-180' : ''}`} />
+          </button>
+
+          {/* Export */}
+          <button
+            onClick={handleExportPDF}
+            className="flex items-center gap-1 px-2 py-1.5 rounded-md bg-zinc-700/50 text-xs text-zinc-400 hover:text-white transition-colors"
+            title="Export"
+          >
+            <Download className="w-3.5 h-3.5" />
+          </button>
+        </div>
+
+        {/* Expanded Language Tools */}
+        {showLanguageTools && (
+          <div className="mt-2 p-2 rounded-lg bg-[#1a1325]/50 border border-purple-500/10 grid grid-cols-4 gap-2">
+            {/* German */}
+            <button
+              onClick={handleTranslateGerman}
+              disabled={isTranslatingDe}
+              className={`flex items-center justify-center gap-1 px-2 py-1.5 rounded text-xs transition-colors ${
+                showDeTranslation ? 'bg-yellow-500/30 text-yellow-300' : 'bg-yellow-500/10 text-yellow-400 hover:bg-yellow-500/20'
+              } disabled:opacity-50`}
+            >
+              {isTranslatingDe ? <Loader2 className="w-3 h-3 animate-spin" /> : '🇩🇪'}
+              <span className="hidden sm:inline">{showDeTranslation ? '✓' : 'DE'}</span>
+            </button>
+            {translatedDeText && (
               <button
-                onClick={() => handleSpeak('original')}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
-                  isSpeaking && speakingLang === 'original'
-                    ? 'bg-purple-500 text-white'
-                    : 'bg-purple-500/20 text-purple-300 hover:bg-purple-500/30'
+                onClick={() => handleSpeak('german')}
+                className={`flex items-center justify-center gap-1 px-2 py-1.5 rounded text-xs ${
+                  isSpeaking && speakingLang === 'german' ? 'bg-yellow-500 text-white' : 'bg-yellow-500/20 text-yellow-300'
                 }`}
               >
-                {isSpeaking && speakingLang === 'original' ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
-                Vorlesen
+                {isSpeaking && speakingLang === 'german' ? <Pause className="w-3 h-3" /> : <Play className="w-3 h-3" />}
               </button>
-            </div>
+            )}
 
-            {/* German Row */}
-            <div className="flex items-center gap-2 p-2 rounded-lg bg-[#241b2f]/50 hover:bg-[#241b2f] transition-colors">
-              <span className="text-lg w-8 text-center">🇩🇪</span>
-              <span className="flex-1 text-sm text-zinc-300 font-medium">Deutsch</span>
+            {/* English */}
+            <button
+              onClick={handleTranslate}
+              disabled={isTranslating}
+              className={`flex items-center justify-center gap-1 px-2 py-1.5 rounded text-xs transition-colors ${
+                showTranslation ? 'bg-blue-500/30 text-blue-300' : 'bg-blue-500/10 text-blue-400 hover:bg-blue-500/20'
+              } disabled:opacity-50`}
+            >
+              {isTranslating ? <Loader2 className="w-3 h-3 animate-spin" /> : '🇬🇧'}
+              <span className="hidden sm:inline">{showTranslation ? '✓' : 'EN'}</span>
+            </button>
+            {translatedText && (
               <button
-                onClick={handleTranslateGerman}
-                disabled={isTranslatingDe}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
-                  showDeTranslation
-                    ? 'bg-yellow-500/30 text-yellow-300'
-                    : 'bg-yellow-500/10 text-yellow-400 hover:bg-yellow-500/20'
-                } disabled:opacity-50`}
+                onClick={() => handleSpeak('english')}
+                className={`flex items-center justify-center gap-1 px-2 py-1.5 rounded text-xs ${
+                  isSpeaking && speakingLang === 'english' ? 'bg-blue-500 text-white' : 'bg-blue-500/20 text-blue-300'
+                }`}
               >
-                {isTranslatingDe ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Languages className="w-3.5 h-3.5" />}
-                {isTranslatingDe ? '...' : showDeTranslation ? 'Aktiv ✓' : 'Übersetzen'}
+                {isSpeaking && speakingLang === 'english' ? <Pause className="w-3 h-3" /> : <Play className="w-3 h-3" />}
               </button>
-              {translatedDeText && (
-                <button
-                  onClick={() => handleSpeak('german')}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
-                    isSpeaking && speakingLang === 'german'
-                      ? 'bg-yellow-500 text-white'
-                      : 'bg-yellow-500/20 text-yellow-300 hover:bg-yellow-500/30'
-                  }`}
-                >
-                  {isSpeaking && speakingLang === 'german' ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
-                  Vorlesen
-                </button>
-              )}
-            </div>
+            )}
 
-            {/* English Row */}
-            <div className="flex items-center gap-2 p-2 rounded-lg bg-[#241b2f]/50 hover:bg-[#241b2f] transition-colors">
-              <span className="text-lg w-8 text-center">🇬🇧</span>
-              <span className="flex-1 text-sm text-zinc-300 font-medium">English</span>
+            {/* Bulgarian */}
+            <button
+              onClick={handleTranslateBulgarian}
+              disabled={isTranslatingBg}
+              className={`flex items-center justify-center gap-1 px-2 py-1.5 rounded text-xs transition-colors ${
+                showBgTranslation ? 'bg-orange-500/30 text-orange-300' : 'bg-orange-500/10 text-orange-400 hover:bg-orange-500/20'
+              } disabled:opacity-50`}
+            >
+              {isTranslatingBg ? <Loader2 className="w-3 h-3 animate-spin" /> : '🇧🇬'}
+              <span className="hidden sm:inline">{showBgTranslation ? '✓' : 'BG'}</span>
+            </button>
+            {translatedBgText && (
               <button
-                onClick={handleTranslate}
-                disabled={isTranslating}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
-                  showTranslation
-                    ? 'bg-blue-500/30 text-blue-300'
-                    : 'bg-blue-500/10 text-blue-400 hover:bg-blue-500/20'
-                } disabled:opacity-50`}
+                onClick={() => handleSpeak('bulgarian')}
+                className={`flex items-center justify-center gap-1 px-2 py-1.5 rounded text-xs ${
+                  isSpeaking && speakingLang === 'bulgarian' ? 'bg-orange-500 text-white' : 'bg-orange-500/20 text-orange-300'
+                }`}
               >
-                {isTranslating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Languages className="w-3.5 h-3.5" />}
-                {isTranslating ? '...' : showTranslation ? 'Active ✓' : 'Translate'}
+                {isSpeaking && speakingLang === 'bulgarian' ? <Pause className="w-3 h-3" /> : <Play className="w-3 h-3" />}
               </button>
-              {translatedText && (
-                <button
-                  onClick={() => handleSpeak('english')}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
-                    isSpeaking && speakingLang === 'english'
-                      ? 'bg-blue-500 text-white'
-                      : 'bg-blue-500/20 text-blue-300 hover:bg-blue-500/30'
-                  }`}
-                >
-                  {isSpeaking && speakingLang === 'english' ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
-                  Speak
-                </button>
-              )}
-            </div>
-
-            {/* Bulgarian Row */}
-            <div className="flex items-center gap-2 p-2 rounded-lg bg-[#241b2f]/50 hover:bg-[#241b2f] transition-colors">
-              <span className="text-lg w-8 text-center">🇧🇬</span>
-              <span className="flex-1 text-sm text-zinc-300 font-medium">Български</span>
-              <button
-                onClick={handleTranslateBulgarian}
-                disabled={isTranslatingBg}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
-                  showBgTranslation
-                    ? 'bg-orange-500/30 text-orange-300'
-                    : 'bg-orange-500/10 text-orange-400 hover:bg-orange-500/20'
-                } disabled:opacity-50`}
-              >
-                {isTranslatingBg ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Languages className="w-3.5 h-3.5" />}
-                {isTranslatingBg ? '...' : showBgTranslation ? 'Активен ✓' : 'Превод'}
-              </button>
-              {translatedBgText && (
-                <button
-                  onClick={() => handleSpeak('bulgarian')}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
-                    isSpeaking && speakingLang === 'bulgarian'
-                      ? 'bg-orange-500 text-white'
-                      : 'bg-orange-500/20 text-orange-300 hover:bg-orange-500/30'
-                  }`}
-                >
-                  {isSpeaking && speakingLang === 'bulgarian' ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
-                  Говори
-                </button>
-              )}
-            </div>
+            )}
           </div>
-        </div>
+        )}
       </div>
 
       {/* Content - nur anzeigen wenn nicht minimiert */}

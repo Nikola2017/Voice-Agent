@@ -46,6 +46,7 @@ interface ExtendedAppState extends AppState {
   clearDateFilter: () => void;
   userProfile: UserProfile | null;
   updateUserProfile: (profile: Partial<UserProfile>) => void;
+  clearAuditLog: (period: 'all' | 'month' | 'day') => void;
 }
 
 export const useAppStore = create<ExtendedAppState>()(
@@ -248,6 +249,26 @@ export const useAppStore = create<ExtendedAppState>()(
         set((state) => ({
           auditLog: [entry, ...state.auditLog].slice(0, 1000),
         }));
+      },
+
+      clearAuditLog: (period: 'all' | 'month' | 'day') => {
+        const now = new Date();
+        set((state) => {
+          if (period === 'all') {
+            return { auditLog: [] };
+          }
+
+          const cutoff = new Date();
+          if (period === 'month') {
+            cutoff.setMonth(cutoff.getMonth() - 1);
+          } else if (period === 'day') {
+            cutoff.setDate(cutoff.getDate() - 1);
+          }
+
+          return {
+            auditLog: state.auditLog.filter(entry => new Date(entry.timestamp) > cutoff)
+          };
+        });
       },
 
       shareNote: (noteId: string, email: string) => {
