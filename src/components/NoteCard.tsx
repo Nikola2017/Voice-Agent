@@ -1149,7 +1149,7 @@ ${note.summary || 'Keine Zusammenfassung verfügbar.'}
               </div>
             </div>
           ) : (
-            <p className="text-sm text-zinc-300 leading-relaxed">
+            <div className="text-sm text-zinc-300 leading-relaxed whitespace-pre-line">
               {showTranslation && translatedSummary
                 ? translatedSummary
                 : showBgTranslation && translatedBgSummary
@@ -1157,7 +1157,7 @@ ${note.summary || 'Keine Zusammenfassung verfügbar.'}
                   : showDeTranslation && translatedDeSummary
                     ? translatedDeSummary
                     : (note.summary || 'Keine Zusammenfassung verfügbar.')}
-            </p>
+            </div>
           )}
         </div>
 
