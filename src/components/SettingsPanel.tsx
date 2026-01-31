@@ -1,21 +1,36 @@
 'use client';
 
-import { useState } from 'react';
-import { 
-  Settings, 
-  Mic, 
-  Shield, 
-  Users, 
+import { useState, useEffect } from 'react';
+import {
+  Settings,
+  Mic,
+  Shield,
+  Users,
   WifiOff,
   History,
   Download,
   Trash2,
   Key,
   Bell,
-  Globe
+  Globe,
+  Sparkles,
+  Cpu,
+  CheckCircle,
+  XCircle,
+  ExternalLink,
+  AlertTriangle,
+  Brain,
+  AudioLines,
+  Cloud
 } from 'lucide-react';
 import { useAppStore } from '@/lib/store';
 import { LANGUAGES } from '@/types';
+
+interface AIFeatureStatus {
+  openai: 'checking' | 'active' | 'inactive';
+  anthropic: 'checking' | 'active' | 'inactive';
+  elevenlabs: 'checking' | 'active' | 'inactive';
+}
 
 export function SettingsPanel() {
   const {
@@ -32,7 +47,34 @@ export function SettingsPanel() {
   } = useAppStore();
 
   const [showAuditLog, setShowAuditLog] = useState(false);
-  const [activeTab, setActiveTab] = useState<'general' | 'security' | 'audit'>('general');
+  const [activeTab, setActiveTab] = useState<'general' | 'security' | 'audit' | 'ai'>('general');
+  const [aiStatus, setAiStatus] = useState<AIFeatureStatus>({
+    openai: 'checking',
+    anthropic: 'inactive',
+    elevenlabs: 'inactive'
+  });
+
+  // Check API status on mount
+  useEffect(() => {
+    const checkAIStatus = async () => {
+      try {
+        // Check OpenAI by testing the summarize endpoint
+        const response = await fetch('/api/summarize', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ transcript: 'test', language: 'de' }),
+        });
+        const data = await response.json();
+        setAiStatus(prev => ({
+          ...prev,
+          openai: data.error === 'NO_API_KEY' ? 'inactive' : 'active'
+        }));
+      } catch {
+        setAiStatus(prev => ({ ...prev, openai: 'inactive' }));
+      }
+    };
+    checkAIStatus();
+  }, []);
 
   const exportData = () => {
     const data = {
@@ -61,9 +103,10 @@ export function SettingsPanel() {
       </h2>
 
       {/* Tabs */}
-      <div className="flex gap-2 border-b border-purple-500/10 pb-2">
+      <div className="flex gap-2 border-b border-purple-500/10 pb-2 flex-wrap">
         {[
           { id: 'general', label: 'Allgemein', icon: <Settings className="w-4 h-4" /> },
+          { id: 'ai', label: 'KI-Features', icon: <Sparkles className="w-4 h-4" /> },
           { id: 'security', label: 'Sicherheit', icon: <Shield className="w-4 h-4" /> },
           { id: 'audit', label: 'Audit Log', icon: <History className="w-4 h-4" /> },
         ].map((tab) => (
@@ -178,6 +221,197 @@ export function SettingsPanel() {
               </button>
             }
           />
+        </div>
+      )}
+
+      {/* AI Features Settings */}
+      {activeTab === 'ai' && (
+        <div className="space-y-4">
+          {/* AI Status Overview */}
+          <div className="p-4 bg-gradient-to-r from-purple-500/10 to-pink-500/10 rounded-xl border border-purple-500/20">
+            <h3 className="text-lg font-semibold text-white mb-3 flex items-center gap-2">
+              <Brain className="w-5 h-5 text-purple-400" />
+              KI-Features Status
+            </h3>
+            <div className="grid gap-3">
+              {/* OpenAI Status */}
+              <div className="flex items-center justify-between p-3 bg-[#1a1325] rounded-lg">
+                <div className="flex items-center gap-3">
+                  <div className={`w-2 h-2 rounded-full ${aiStatus.openai === 'active' ? 'bg-green-500' : aiStatus.openai === 'checking' ? 'bg-yellow-500 animate-pulse' : 'bg-red-500'}`} />
+                  <div>
+                    <p className="text-sm font-medium text-white">OpenAI API</p>
+                    <p className="text-xs text-zinc-500">GPT Summarization + Whisper</p>
+                  </div>
+                </div>
+                <span className={`px-2 py-1 rounded text-xs ${aiStatus.openai === 'active' ? 'bg-green-500/20 text-green-400' : aiStatus.openai === 'checking' ? 'bg-yellow-500/20 text-yellow-400' : 'bg-red-500/20 text-red-400'}`}>
+                  {aiStatus.openai === 'active' ? 'Aktiv' : aiStatus.openai === 'checking' ? 'Prüfe...' : 'Nicht konfiguriert'}
+                </span>
+              </div>
+
+              {/* Sentiment Analysis (Local) */}
+              <div className="flex items-center justify-between p-3 bg-[#1a1325] rounded-lg">
+                <div className="flex items-center gap-3">
+                  <div className="w-2 h-2 rounded-full bg-green-500" />
+                  <div>
+                    <p className="text-sm font-medium text-white">Sentiment Analyse</p>
+                    <p className="text-xs text-zinc-500">Lokal - Kein API Key nötig</p>
+                  </div>
+                </div>
+                <span className="px-2 py-1 rounded text-xs bg-green-500/20 text-green-400">
+                  Kostenlos
+                </span>
+              </div>
+
+              {/* Translation */}
+              <div className="flex items-center justify-between p-3 bg-[#1a1325] rounded-lg">
+                <div className="flex items-center gap-3">
+                  <div className="w-2 h-2 rounded-full bg-green-500" />
+                  <div>
+                    <p className="text-sm font-medium text-white">Übersetzung</p>
+                    <p className="text-xs text-zinc-500">MyMemory API - Kostenlos</p>
+                  </div>
+                </div>
+                <span className="px-2 py-1 rounded text-xs bg-green-500/20 text-green-400">
+                  Kostenlos
+                </span>
+              </div>
+
+              {/* Text-to-Speech */}
+              <div className="flex items-center justify-between p-3 bg-[#1a1325] rounded-lg">
+                <div className="flex items-center gap-3">
+                  <div className="w-2 h-2 rounded-full bg-green-500" />
+                  <div>
+                    <p className="text-sm font-medium text-white">Text-to-Speech</p>
+                    <p className="text-xs text-zinc-500">Browser API - Kostenlos</p>
+                  </div>
+                </div>
+                <span className="px-2 py-1 rounded text-xs bg-green-500/20 text-green-400">
+                  Kostenlos
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Setup Guide */}
+          <div className="p-4 bg-[#1a1325] rounded-xl border border-purple-500/10">
+            <h3 className="text-lg font-semibold text-white mb-3 flex items-center gap-2">
+              <Key className="w-5 h-5 text-yellow-400" />
+              API Keys einrichten
+            </h3>
+
+            {/* OpenAI Setup */}
+            <div className="mb-4 p-3 bg-[#241b2f] rounded-lg">
+              <h4 className="text-sm font-medium text-white mb-2 flex items-center gap-2">
+                <Cpu className="w-4 h-4 text-green-400" />
+                OpenAI API Key
+              </h4>
+              <ol className="text-xs text-zinc-400 space-y-1 ml-4 list-decimal">
+                <li>Gehe zu <a href="https://platform.openai.com" target="_blank" rel="noopener noreferrer" className="text-purple-400 hover:underline inline-flex items-center gap-1">platform.openai.com <ExternalLink className="w-3 h-3" /></a></li>
+                <li>Registriere dich oder logge dich ein</li>
+                <li>Klicke auf dein Profil (oben rechts) → &quot;View API keys&quot;</li>
+                <li>Klicke &quot;Create new secret key&quot;</li>
+                <li>Kopiere den Key (beginnt mit sk-...)</li>
+                <li>Erstelle eine Datei <code className="px-1 py-0.5 bg-purple-500/20 rounded">.env.local</code> im Projektordner</li>
+                <li>Füge ein: <code className="px-1 py-0.5 bg-purple-500/20 rounded">OPENAI_API_KEY=sk-dein-key</code></li>
+                <li>Starte die App neu: <code className="px-1 py-0.5 bg-purple-500/20 rounded">npm run dev</code></li>
+              </ol>
+              <p className="text-xs text-zinc-500 mt-2">
+                Kosten: ~$0.002-0.03 pro Zusammenfassung
+              </p>
+            </div>
+
+            {/* Claude Setup */}
+            <div className="mb-4 p-3 bg-[#241b2f] rounded-lg">
+              <h4 className="text-sm font-medium text-white mb-2 flex items-center gap-2">
+                <Brain className="w-4 h-4 text-orange-400" />
+                Anthropic (Claude) API Key <span className="text-xs text-zinc-500">(Optional)</span>
+              </h4>
+              <ol className="text-xs text-zinc-400 space-y-1 ml-4 list-decimal">
+                <li>Gehe zu <a href="https://console.anthropic.com" target="_blank" rel="noopener noreferrer" className="text-purple-400 hover:underline inline-flex items-center gap-1">console.anthropic.com <ExternalLink className="w-3 h-3" /></a></li>
+                <li>Registriere dich oder logge dich ein</li>
+                <li>Gehe zu &quot;API Keys&quot; in der Seitenleiste</li>
+                <li>Klicke &quot;Create Key&quot;</li>
+                <li>Kopiere den Key (beginnt mit sk-ant-...)</li>
+                <li>Füge in <code className="px-1 py-0.5 bg-purple-500/20 rounded">.env.local</code> ein:</li>
+                <li><code className="px-1 py-0.5 bg-purple-500/20 rounded">ANTHROPIC_API_KEY=sk-ant-dein-key</code></li>
+              </ol>
+            </div>
+
+            {/* ElevenLabs Setup */}
+            <div className="p-3 bg-[#241b2f] rounded-lg">
+              <h4 className="text-sm font-medium text-white mb-2 flex items-center gap-2">
+                <AudioLines className="w-4 h-4 text-blue-400" />
+                ElevenLabs API Key <span className="text-xs text-zinc-500">(Voice Cloning)</span>
+              </h4>
+              <ol className="text-xs text-zinc-400 space-y-1 ml-4 list-decimal">
+                <li>Gehe zu <a href="https://elevenlabs.io" target="_blank" rel="noopener noreferrer" className="text-purple-400 hover:underline inline-flex items-center gap-1">elevenlabs.io <ExternalLink className="w-3 h-3" /></a></li>
+                <li>Registriere dich oder logge dich ein</li>
+                <li>Klicke auf dein Profil (unten links)</li>
+                <li>Gehe zu &quot;Profile + API key&quot;</li>
+                <li>Kopiere deinen API Key</li>
+                <li>Füge in <code className="px-1 py-0.5 bg-purple-500/20 rounded">.env.local</code> ein:</li>
+                <li><code className="px-1 py-0.5 bg-purple-500/20 rounded">ELEVENLABS_API_KEY=dein-key</code></li>
+              </ol>
+            </div>
+          </div>
+
+          {/* Features Overview */}
+          <div className="p-4 bg-[#1a1325] rounded-xl border border-purple-500/10">
+            <h3 className="text-lg font-semibold text-white mb-3 flex items-center gap-2">
+              <Sparkles className="w-5 h-5 text-purple-400" />
+              Verfügbare Features
+            </h3>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="text-zinc-500 border-b border-purple-500/10">
+                    <th className="text-left p-2">Feature</th>
+                    <th className="text-left p-2">API</th>
+                    <th className="text-left p-2">Kosten</th>
+                    <th className="text-left p-2">Status</th>
+                  </tr>
+                </thead>
+                <tbody className="text-zinc-400">
+                  <tr className="border-b border-purple-500/5">
+                    <td className="p-2 text-white">KI-Zusammenfassung</td>
+                    <td className="p-2">OpenAI</td>
+                    <td className="p-2">~$0.002/Request</td>
+                    <td className="p-2">{aiStatus.openai === 'active' ? <CheckCircle className="w-4 h-4 text-green-400" /> : <XCircle className="w-4 h-4 text-red-400" />}</td>
+                  </tr>
+                  <tr className="border-b border-purple-500/5">
+                    <td className="p-2 text-white">Whisper Transkription</td>
+                    <td className="p-2">OpenAI</td>
+                    <td className="p-2">~$0.006/Minute</td>
+                    <td className="p-2">{aiStatus.openai === 'active' ? <CheckCircle className="w-4 h-4 text-green-400" /> : <XCircle className="w-4 h-4 text-red-400" />}</td>
+                  </tr>
+                  <tr className="border-b border-purple-500/5">
+                    <td className="p-2 text-white">Sentiment Analyse</td>
+                    <td className="p-2">Lokal</td>
+                    <td className="p-2 text-green-400">Kostenlos</td>
+                    <td className="p-2"><CheckCircle className="w-4 h-4 text-green-400" /></td>
+                  </tr>
+                  <tr className="border-b border-purple-500/5">
+                    <td className="p-2 text-white">Übersetzung (DE/EN/BG)</td>
+                    <td className="p-2">MyMemory</td>
+                    <td className="p-2 text-green-400">Kostenlos</td>
+                    <td className="p-2"><CheckCircle className="w-4 h-4 text-green-400" /></td>
+                  </tr>
+                  <tr className="border-b border-purple-500/5">
+                    <td className="p-2 text-white">Text-to-Speech</td>
+                    <td className="p-2">Browser</td>
+                    <td className="p-2 text-green-400">Kostenlos</td>
+                    <td className="p-2"><CheckCircle className="w-4 h-4 text-green-400" /></td>
+                  </tr>
+                  <tr>
+                    <td className="p-2 text-white">Voice Cloning</td>
+                    <td className="p-2">ElevenLabs</td>
+                    <td className="p-2">~$0.30/1000 Zeichen</td>
+                    <td className="p-2"><AlertTriangle className="w-4 h-4 text-yellow-400" title="Coming Soon" /></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
         </div>
       )}
 

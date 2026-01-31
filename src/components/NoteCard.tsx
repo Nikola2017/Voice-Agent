@@ -23,11 +23,16 @@ import {
   User,
   Volume2,
   FileText,
-  Download
+  Download,
+  TrendingUp,
+  TrendingDown,
+  Minus,
+  BarChart3
 } from 'lucide-react';
 import { useAppStore } from '@/lib/store';
 import type { Note } from '@/types';
 import { SPEAKER_COLORS } from '@/types';
+import { analyzeSentiment, getSentimentEmoji, type SentimentResult } from '@/lib/sentimentAnalysis';
 
 interface NoteCardProps {
   note: Note;
@@ -85,8 +90,15 @@ export function NoteCard({ note }: NoteCardProps) {
   const [editedSummary, setEditedSummary] = useState(note.summary || '');
   // Language tools collapse
   const [showLanguageTools, setShowLanguageTools] = useState(false);
+  // Sentiment analysis
+  const [showSentimentDetails, setShowSentimentDetails] = useState(false);
 
   const isEditing = isEditingTranscript && editingNoteId === note.id;
+
+  // Local sentiment analysis
+  const localSentiment = useMemo(() => {
+    return analyzeSentiment(note.rawTranscript, note.language);
+  }, [note.rawTranscript, note.language]);
 
   // Load available voices
   useEffect(() => {
@@ -582,9 +594,24 @@ ${note.summary || 'Keine Zusammenfassung verfügbar.'}
                 </button>
               )}
               
-              <span className={`px-2 py-0.5 rounded-full text-xs badge-${note.sentiment}`}>
-                {note.sentiment}
-              </span>
+              <button
+                onClick={() => setShowSentimentDetails(!showSentimentDetails)}
+                className={`px-2 py-0.5 rounded-full text-xs flex items-center gap-1 transition-colors hover:opacity-80 ${
+                  localSentiment.sentiment === 'positive' ? 'bg-green-500/20 text-green-400' :
+                  localSentiment.sentiment === 'negative' ? 'bg-red-500/20 text-red-400' :
+                  'bg-zinc-500/20 text-zinc-400'
+                }`}
+                title="Sentiment-Analyse anzeigen"
+              >
+                {localSentiment.sentiment === 'positive' ? <TrendingUp className="w-3 h-3" /> :
+                 localSentiment.sentiment === 'negative' ? <TrendingDown className="w-3 h-3" /> :
+                 <Minus className="w-3 h-3" />}
+                {getSentimentEmoji(localSentiment.sentiment)}
+                <span className="hidden sm:inline">
+                  {localSentiment.sentiment === 'positive' ? 'Positiv' :
+                   localSentiment.sentiment === 'negative' ? 'Negativ' : 'Neutral'}
+                </span>
+              </button>
               
               {note.deadline && (
                 <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-blue-500/20 text-blue-400">
@@ -707,6 +734,76 @@ ${note.summary || 'Keine Zusammenfassung verfügbar.'}
                   </span>
                 ))}
               </div>
+            )}
+          </div>
+        )}
+
+        {/* Sentiment Details */}
+        {showSentimentDetails && (
+          <div className="mt-3 p-3 rounded-lg bg-[#1a1325] border border-purple-500/20">
+            <div className="flex items-center justify-between mb-3">
+              <p className="text-sm font-medium text-white flex items-center gap-2">
+                <BarChart3 className="w-4 h-4 text-purple-400" />
+                Sentiment-Analyse
+              </p>
+              <button
+                onClick={() => setShowSentimentDetails(false)}
+                className="text-zinc-500 hover:text-white"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Score Bar */}
+            <div className="mb-3">
+              <div className="flex items-center justify-between text-xs text-zinc-500 mb-1">
+                <span>Negativ</span>
+                <span>Neutral</span>
+                <span>Positiv</span>
+              </div>
+              <div className="h-2 bg-gradient-to-r from-red-500 via-zinc-500 to-green-500 rounded-full relative">
+                <div
+                  className="absolute top-1/2 -translate-y-1/2 w-3 h-3 bg-white rounded-full border-2 border-purple-500 shadow"
+                  style={{ left: `${((localSentiment.score + 1) / 2) * 100}%`, transform: 'translate(-50%, -50%)' }}
+                />
+              </div>
+              <p className="text-center text-xs text-zinc-400 mt-1">
+                Score: {(localSentiment.score * 100).toFixed(0)}% | Konfidenz: {localSentiment.confidence}%
+              </p>
+            </div>
+
+            {/* Word Analysis */}
+            <div className="grid grid-cols-2 gap-2">
+              {localSentiment.details.positiveWords.length > 0 && (
+                <div className="p-2 bg-green-500/10 rounded">
+                  <p className="text-xs text-green-400 font-medium mb-1">Positive Wörter ({localSentiment.details.positiveCount})</p>
+                  <div className="flex flex-wrap gap-1">
+                    {localSentiment.details.positiveWords.slice(0, 5).map((word, i) => (
+                      <span key={i} className="px-1.5 py-0.5 bg-green-500/20 rounded text-[10px] text-green-300">
+                        {word}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {localSentiment.details.negativeWords.length > 0 && (
+                <div className="p-2 bg-red-500/10 rounded">
+                  <p className="text-xs text-red-400 font-medium mb-1">Negative Wörter ({localSentiment.details.negativeCount})</p>
+                  <div className="flex flex-wrap gap-1">
+                    {localSentiment.details.negativeWords.slice(0, 5).map((word, i) => (
+                      <span key={i} className="px-1.5 py-0.5 bg-red-500/20 rounded text-[10px] text-red-300">
+                        {word}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {localSentiment.details.positiveWords.length === 0 && localSentiment.details.negativeWords.length === 0 && (
+              <p className="text-xs text-zinc-500 text-center py-2">
+                Keine ausgeprägten Sentiment-Wörter gefunden - Text ist neutral.
+              </p>
             )}
           </div>
         )}
