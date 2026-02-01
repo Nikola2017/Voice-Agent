@@ -256,6 +256,39 @@ export function NoteCard({ note }: NoteCardProps) {
     setEditingTranscript(false, null);
   };
 
+  // Find a voice that matches the target language
+  const findVoiceForLanguage = (langCode: string): SpeechSynthesisVoice | null => {
+    // Try to find a voice that matches the language
+    const langPrefix = langCode.split('-')[0]; // e.g., 'en' from 'en-US'
+
+    // First, check if user's selected voice matches the target language
+    const selectedVoice = getSelectedVoice();
+    if (selectedVoice && selectedVoice.lang.toLowerCase().startsWith(langPrefix.toLowerCase())) {
+      return selectedVoice;
+    }
+
+    // Otherwise, find the best voice for this language
+    const matchingVoices = availableVoices.filter(v =>
+      v.lang.toLowerCase().startsWith(langPrefix.toLowerCase())
+    );
+
+    if (matchingVoices.length > 0) {
+      // Prefer a voice that matches the exact locale (e.g., 'en-US' over 'en-GB')
+      const exactMatch = matchingVoices.find(v =>
+        v.lang.toLowerCase() === langCode.toLowerCase()
+      );
+      if (exactMatch) return exactMatch;
+
+      // Otherwise, prefer a default or high-quality voice
+      const defaultVoice = matchingVoices.find(v => v.default);
+      if (defaultVoice) return defaultVoice;
+
+      return matchingVoices[0];
+    }
+
+    return null;
+  };
+
   const handleSpeak = (language: 'original' | 'english' | 'bulgarian' | 'german' = 'original') => {
     if (isSpeaking) {
       speechSynthesis.cancel();
@@ -286,8 +319,8 @@ export function NoteCard({ note }: NoteCardProps) {
       const utterance = new SpeechSynthesisUtterance(textToSpeak);
       utterance.lang = lang;
 
-      // Apply selected voice directly
-      const voice = getSelectedVoice();
+      // Find the appropriate voice for the target language
+      const voice = findVoiceForLanguage(lang);
       if (voice) {
         utterance.voice = voice;
       }
