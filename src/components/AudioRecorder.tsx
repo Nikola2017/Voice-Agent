@@ -60,18 +60,22 @@ async function createAISummary(text: string, language: string): Promise<{ title:
 }
 
 // Auto-translate function
-async function translateText(text: string, targetLang: string): Promise<string> {
+async function translateText(text: string, sourceLang: string, targetLang: string): Promise<string> {
+  // Don't translate if source and target are the same
+  if (sourceLang === targetLang) {
+    return text;
+  }
+
   try {
-    const sourceLang = 'de'; // Assume German source
     const response = await fetch(
       `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=${sourceLang}|${targetLang}`
     );
     const data = await response.json();
-    if (data.responseStatus === 200) {
+    if (data.responseStatus === 200 && data.responseData?.translatedText) {
       return data.responseData.translatedText;
     }
   } catch (e) {
-    console.log('Translation failed');
+    console.log('Translation failed:', e);
   }
   return text;
 }
@@ -135,7 +139,7 @@ export function AudioRecorder() {
       const segmentIndex = transcriptSegments.length - 1;
 
       if (!translatedSegments[segmentIndex]) {
-        translateText(lastSegment.text, translateLang).then(translated => {
+        translateText(lastSegment.text, currentLanguage, translateLang).then(translated => {
           setTranslatedSegments(prev => ({
             ...prev,
             [segmentIndex]: translated
@@ -143,7 +147,7 @@ export function AudioRecorder() {
         });
       }
     }
-  }, [transcriptSegments, autoTranslate, translateLang, translatedSegments]);
+  }, [transcriptSegments, autoTranslate, translateLang, translatedSegments, currentLanguage]);
 
   // Handle stop and save
   const handleStop = useCallback(async () => {
@@ -245,8 +249,29 @@ export function AudioRecorder() {
     setRecordingState('processing');
     setProcessingStatus('Erstelle Zusammenfassung...');
 
+    // If auto-translate was enabled, translate all segments before saving
+    if (autoTranslate && savedTimestampedSegments.length > 0) {
+      setProcessingStatus('Übersetze Segmente...');
+      const translatedSegmentsPromises = savedTimestampedSegments.map(async (segment) => {
+        // Skip if already has translation
+        if (segment.translation) {
+          return segment;
+        }
+        const translation = await translateText(segment.text, currentLanguage, translateLang);
+        return {
+          ...segment,
+          translation: translation !== segment.text ? translation : undefined,
+        };
+      });
+      savedTimestampedSegments = await Promise.all(translatedSegmentsPromises);
+      setProcessingStatus('Erstelle Zusammenfassung...');
+    }
+
     try {
       const { title, summary, sentiment } = await createAISummary(finalTranscript, currentLanguage);
+
+      // Check if any segment has a translation
+      const hasTranslations = savedTimestampedSegments.some(seg => seg.translation);
 
       const newNote: Note = {
         id: generateId(),
@@ -261,7 +286,7 @@ export function AudioRecorder() {
         duration: recordingTime,
         // Save timestamped segments with translations
         timestampedSegments: savedTimestampedSegments.length > 0 ? savedTimestampedSegments : undefined,
-        translationLanguage: autoTranslate && Object.keys(translatedSegments).length > 0 ? translateLang : undefined,
+        translationLanguage: autoTranslate && hasTranslations ? translateLang : undefined,
       };
 
       addNote(newNote);
@@ -277,6 +302,8 @@ export function AudioRecorder() {
     } catch (err) {
       console.error('Error:', err);
       const local = createLocalSummary(finalTranscript);
+      // Check if any segment has a translation
+      const hasTranslationsOnError = savedTimestampedSegments.some(seg => seg.translation);
       const newNote: Note = {
         id: generateId(),
         title: local.title,
@@ -290,7 +317,7 @@ export function AudioRecorder() {
         duration: recordingTime,
         // Save timestamped segments with translations even on error
         timestampedSegments: savedTimestampedSegments.length > 0 ? savedTimestampedSegments : undefined,
-        translationLanguage: autoTranslate && Object.keys(translatedSegments).length > 0 ? translateLang : undefined,
+        translationLanguage: autoTranslate && hasTranslationsOnError ? translateLang : undefined,
       };
       addNote(newNote);
       setRecordingState('idle');
