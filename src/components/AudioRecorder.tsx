@@ -1,8 +1,8 @@
 'use client';
 
 import { useCallback, useEffect, useState, useMemo } from 'react';
-import { Mic, Square, Loader2, AlertCircle, Pause, Play } from 'lucide-react';
-import { useSpeechRecognition } from '@/hooks/useSpeechRecognition';
+import { Mic, Square, Loader2, AlertCircle, Pause, Play, Languages, Globe } from 'lucide-react';
+import { useSpeechRecognition, type TranscriptSegment } from '@/hooks/useSpeechRecognition';
 import { useAppStore } from '@/lib/store';
 import { LANGUAGES, type Note } from '@/types';
 
@@ -59,6 +59,23 @@ async function createAISummary(text: string, language: string): Promise<{ title:
   return { ...local, sentiment: 'neutral' };
 }
 
+// Auto-translate function
+async function translateText(text: string, targetLang: string): Promise<string> {
+  try {
+    const sourceLang = 'de'; // Assume German source
+    const response = await fetch(
+      `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=${sourceLang}|${targetLang}`
+    );
+    const data = await response.json();
+    if (data.responseStatus === 200) {
+      return data.responseData.translatedText;
+    }
+  } catch (e) {
+    console.log('Translation failed');
+  }
+  return text;
+}
+
 export function AudioRecorder() {
   const {
     recordingState,
@@ -69,6 +86,9 @@ export function AudioRecorder() {
   } = useAppStore();
 
   const [processingStatus, setProcessingStatus] = useState('');
+  const [autoTranslate, setAutoTranslate] = useState(false);
+  const [translateLang, setTranslateLang] = useState<'en' | 'de' | 'bg'>('en');
+  const [translatedSegments, setTranslatedSegments] = useState<{[key: number]: string}>({});
 
   // Voice command callbacks
   const voiceCallbacks = useMemo(() => ({
@@ -91,6 +111,7 @@ export function AudioRecorder() {
     isPaused,
     transcript,
     interimTranscript,
+    transcriptSegments,
     recordingTime,
     error,
     isSupported,
@@ -101,6 +122,23 @@ export function AudioRecorder() {
     resetTranscript,
   } = useSpeechRecognition(currentLanguage, voiceCallbacks);
 
+  // Auto-translate new segments
+  useEffect(() => {
+    if (autoTranslate && transcriptSegments.length > 0) {
+      const lastSegment = transcriptSegments[transcriptSegments.length - 1];
+      const segmentIndex = transcriptSegments.length - 1;
+
+      if (!translatedSegments[segmentIndex]) {
+        translateText(lastSegment.text, translateLang).then(translated => {
+          setTranslatedSegments(prev => ({
+            ...prev,
+            [segmentIndex]: translated
+          }));
+        });
+      }
+    }
+  }, [transcriptSegments, autoTranslate, translateLang, translatedSegments]);
+
   // Handle stop and save
   const handleStop = useCallback(async () => {
     const finalTranscript = stopRecording();
@@ -110,6 +148,7 @@ export function AudioRecorder() {
 
     if (!finalTranscript || finalTranscript.trim().length === 0) {
       setRecordingState('idle');
+      setTranslatedSegments({});
       return;
     }
 
@@ -139,6 +178,7 @@ export function AudioRecorder() {
         setProcessingStatus('');
         setRecordingState('idle');
         resetTranscript();
+        setTranslatedSegments({});
       }, 1000);
 
     } catch (err) {
@@ -159,6 +199,7 @@ export function AudioRecorder() {
       addNote(newNote);
       setRecordingState('idle');
       resetTranscript();
+      setTranslatedSegments({});
     }
   }, [stopRecording, currentLanguage, currentMode, recordingTime, setRecordingState, addNote, resetTranscript]);
 
@@ -166,6 +207,7 @@ export function AudioRecorder() {
   const handleStart = useCallback(() => {
     console.log('=== Starting recording ===');
     resetTranscript();
+    setTranslatedSegments({});
     startRecording();
     setRecordingState('recording');
   }, [resetTranscript, startRecording, setRecordingState]);
@@ -221,6 +263,7 @@ export function AudioRecorder() {
         stopRecording();
         setRecordingState('idle');
         resetTranscript();
+        setTranslatedSegments({});
       }
       // Space to pause/resume
       if (e.code === 'Space' && isRecording) {
@@ -327,6 +370,21 @@ export function AudioRecorder() {
             {isPaused ? <Play className="w-4 h-4" /> : <Pause className="w-4 h-4" />}
           </button>
         )}
+
+        {/* Auto-Translate Button */}
+        {isRecording && (
+          <button
+            onClick={() => setAutoTranslate(!autoTranslate)}
+            className={`absolute -left-14 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full border flex items-center justify-center transition ${
+              autoTranslate
+                ? 'bg-blue-500 border-blue-400 text-white'
+                : 'bg-[#241b2f] border-purple-500/30 text-zinc-400 hover:text-white hover:border-purple-500/50'
+            }`}
+            title="Auto-Übersetzen"
+          >
+            <Globe className="w-4 h-4" />
+          </button>
+        )}
       </div>
 
       {/* Status */}
@@ -352,24 +410,88 @@ export function AudioRecorder() {
         </div>
       )}
 
+      {/* Auto-Translate Language Selector */}
+      {isRecording && autoTranslate && (
+        <div className="mt-3 flex items-center gap-2">
+          <Globe className="w-4 h-4 text-blue-400" />
+          <span className="text-xs text-zinc-500">Übersetzen nach:</span>
+          <div className="flex gap-1">
+            {[
+              { code: 'en', flag: '🇬🇧', name: 'EN' },
+              { code: 'de', flag: '🇩🇪', name: 'DE' },
+              { code: 'bg', flag: '🇧🇬', name: 'BG' },
+            ].map(lang => (
+              <button
+                key={lang.code}
+                onClick={() => {
+                  setTranslateLang(lang.code as 'en' | 'de' | 'bg');
+                  setTranslatedSegments({});
+                }}
+                className={`px-2 py-1 rounded text-xs transition ${
+                  translateLang === lang.code
+                    ? 'bg-blue-500 text-white'
+                    : 'bg-[#241b2f] text-zinc-400 hover:text-white'
+                }`}
+              >
+                {lang.flag} {lang.name}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Voice Commands Info */}
       {isRecording && (
         <div className="mt-3 px-4 py-2 rounded-lg bg-purple-500/10 border border-purple-500/20">
           <p className="text-xs text-purple-300 text-center">
-            🎤 Sage <span className="font-bold">"VelaMind Stop"</span> zum Beenden
-            {!isPaused && <> oder <span className="font-bold">"VelaMind Pause"</span></>}
+            🎤 Sage <span className="font-bold">&quot;VelaMind Stop&quot;</span> zum Beenden
+            {!isPaused && <> oder <span className="font-bold">&quot;VelaMind Pause&quot;</span></>}
           </p>
         </div>
       )}
 
-      {/* Live Transcript */}
-      {(transcript || interimTranscript) && isRecording && (
-        <div className="mt-4 max-w-lg p-4 rounded-lg bg-[#1a1325] border border-purple-500/10">
-          <p className="text-xs text-zinc-500 mb-1">Live-Transkription:</p>
-          <p className="text-sm text-zinc-300">
-            {transcript}
-            <span className="text-zinc-500 italic">{interimTranscript}</span>
-          </p>
+      {/* Live Transcript with Timestamps */}
+      {isRecording && (transcriptSegments.length > 0 || interimTranscript) && (
+        <div className="mt-4 w-full max-w-2xl rounded-lg bg-[#1a1325] border border-purple-500/10 overflow-hidden">
+          <div className="px-4 py-2 bg-purple-500/10 border-b border-purple-500/10 flex items-center justify-between">
+            <span className="text-xs text-zinc-500 flex items-center gap-2">
+              <Languages className="w-3 h-3" />
+              Live-Transkription
+            </span>
+            {autoTranslate && (
+              <span className="text-xs text-blue-400">
+                → {translateLang.toUpperCase()}
+              </span>
+            )}
+          </div>
+          <div className="max-h-60 overflow-y-auto p-2">
+            {/* Timestamped Segments */}
+            {transcriptSegments.map((segment, index) => (
+              <div key={index} className="flex gap-3 py-2 border-b border-purple-500/5 last:border-0">
+                <span className="text-xs font-mono text-purple-400 w-12 flex-shrink-0">
+                  {formatTime(segment.timestamp)}
+                </span>
+                <div className="flex-1">
+                  <p className="text-sm text-zinc-300">{segment.text}</p>
+                  {autoTranslate && translatedSegments[index] && (
+                    <p className="text-xs text-blue-400 mt-1">
+                      → {translatedSegments[index]}
+                    </p>
+                  )}
+                </div>
+              </div>
+            ))}
+
+            {/* Current interim text */}
+            {interimTranscript && (
+              <div className="flex gap-3 py-2">
+                <span className="text-xs font-mono text-yellow-400 w-12 flex-shrink-0">
+                  {formatTime(recordingTime)}
+                </span>
+                <p className="text-sm text-zinc-500 italic flex-1">{interimTranscript}</p>
+              </div>
+            )}
+          </div>
         </div>
       )}
 

@@ -9,11 +9,17 @@ interface VoiceCommandCallbacks {
   onResume?: () => void;
 }
 
+export interface TranscriptSegment {
+  timestamp: number;
+  text: string;
+}
+
 interface UseSpeechRecognitionReturn {
   isRecording: boolean;
   isPaused: boolean;
   transcript: string;
   interimTranscript: string;
+  transcriptSegments: TranscriptSegment[];
   recordingTime: number;
   error: string | null;
   isSupported: boolean;
@@ -93,11 +99,13 @@ export function useSpeechRecognition(
   const [isPaused, setIsPaused] = useState(false);
   const [transcript, setTranscript] = useState('');
   const [interimTranscript, setInterimTranscript] = useState('');
+  const [transcriptSegments, setTranscriptSegments] = useState<TranscriptSegment[]>([]);
   const [recordingTime, setRecordingTime] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [isSupported, setIsSupported] = useState(false);
 
   const transcriptRef = useRef('');
+  const recordingTimeRef = useRef(0);
   const recognitionRef = useRef<any>(null);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const isStoppingRef = useRef(false);
@@ -152,9 +160,11 @@ export function useSpeechRecognition(
     setError(null);
     setTranscript('');
     setInterimTranscript('');
+    setTranscriptSegments([]);
     setRecordingTime(0);
     setIsPaused(false);
     transcriptRef.current = '';
+    recordingTimeRef.current = 0;
     isStoppingRef.current = false;
     commandExecutedRef.current = false;
 
@@ -170,7 +180,8 @@ export function useSpeechRecognition(
       setIsRecording(true);
 
       timerRef.current = setInterval(() => {
-        setRecordingTime(prev => prev + 1);
+        recordingTimeRef.current += 1;
+        setRecordingTime(recordingTimeRef.current);
       }, 1000);
     };
 
@@ -207,8 +218,19 @@ export function useSpeechRecognition(
       }
 
       if (final) {
-        transcriptRef.current = final.trim();
-        setTranscript(final.trim());
+        const newText = final.trim();
+        // Check if we have new text to add as a segment
+        if (newText.length > transcriptRef.current.length) {
+          const newPart = newText.substring(transcriptRef.current.length).trim();
+          if (newPart) {
+            setTranscriptSegments(prev => [...prev, {
+              timestamp: recordingTimeRef.current,
+              text: newPart
+            }]);
+          }
+        }
+        transcriptRef.current = newText;
+        setTranscript(newText);
       }
       setInterimTranscript(interim);
     };
@@ -315,8 +337,10 @@ export function useSpeechRecognition(
 
   const resetTranscript = useCallback(() => {
     transcriptRef.current = '';
+    recordingTimeRef.current = 0;
     setTranscript('');
     setInterimTranscript('');
+    setTranscriptSegments([]);
     setRecordingTime(0);
   }, []);
 
@@ -338,6 +362,7 @@ export function useSpeechRecognition(
     isPaused,
     transcript,
     interimTranscript,
+    transcriptSegments,
     recordingTime,
     error,
     isSupported,

@@ -1,30 +1,39 @@
 'use client';
 
-import { useMemo } from 'react';
-import { 
-  BarChart3, 
-  Clock, 
-  FileText, 
+import { useMemo, useState } from 'react';
+import {
+  BarChart3,
+  Clock,
+  FileText,
   TrendingUp,
   Calendar,
   Smile,
   Meh,
-  Frown
+  Frown,
+  FileBarChart,
+  Download,
+  ChevronDown,
+  ChevronUp,
+  Star,
+  MessageSquare,
+  Target
 } from 'lucide-react';
 import { useAppStore } from '@/lib/store';
 import { MODES, type EnrichmentMode } from '@/types';
 
 export function AnalyticsDashboard() {
   const { notes } = useAppStore();
+  const [showWeeklyReport, setShowWeeklyReport] = useState(false);
 
   const analytics = useMemo(() => {
     const now = new Date();
     const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
     const monthAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
 
-    const notesThisWeek = notes.filter(n => new Date(n.createdAt) >= weekAgo).length;
+    const weeklyNotes = notes.filter(n => new Date(n.createdAt) >= weekAgo);
+    const notesThisWeek = weeklyNotes.length;
     const notesThisMonth = notes.filter(n => new Date(n.createdAt) >= monthAgo).length;
-    
+
     const totalDuration = notes.reduce((sum, n) => sum + (n.duration || 0), 0);
     const averageDuration = notes.length > 0 ? totalDuration / notes.length : 0;
 
@@ -52,6 +61,44 @@ export function AnalyticsDashboard() {
       dailyActivity.push({ date: dateStr, count });
     }
 
+    // Weekly Report Data
+    const weeklyDuration = weeklyNotes.reduce((sum, n) => sum + (n.duration || 0), 0);
+    const weeklyAvgDuration = weeklyNotes.length > 0 ? weeklyDuration / weeklyNotes.length : 0;
+
+    const weeklySentiment = {
+      positive: weeklyNotes.filter(n => n.sentiment === 'positive').length,
+      neutral: weeklyNotes.filter(n => n.sentiment === 'neutral').length,
+      negative: weeklyNotes.filter(n => n.sentiment === 'negative').length,
+    };
+
+    const weeklyModes = Object.keys(MODES).reduce((acc, mode) => {
+      acc[mode as EnrichmentMode] = weeklyNotes.filter(n => n.mode === mode).length;
+      return acc;
+    }, {} as Record<EnrichmentMode, number>);
+
+    // Most used mode this week
+    const topMode = Object.entries(weeklyModes).sort((a, b) => b[1] - a[1])[0];
+
+    // Important notes this week (starred)
+    const importantNotes = weeklyNotes.filter(n => n.starred);
+
+    // Recent summaries
+    const recentSummaries = weeklyNotes
+      .filter(n => n.summary)
+      .slice(0, 5)
+      .map(n => ({
+        id: n.id,
+        title: n.title,
+        summary: n.summary,
+        date: n.createdAt,
+        mode: n.mode
+      }));
+
+    // Week date range
+    const weekStart = new Date(weekAgo);
+    const weekEnd = new Date(now);
+    const weekRange = `${weekStart.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' })} - ${weekEnd.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' })}`;
+
     return {
       totalNotes: notes.length,
       totalDuration,
@@ -61,6 +108,18 @@ export function AnalyticsDashboard() {
       sentimentBreakdown,
       modeBreakdown,
       dailyActivity,
+      // Weekly Report
+      weeklyReport: {
+        dateRange: weekRange,
+        totalNotes: notesThisWeek,
+        totalDuration: weeklyDuration,
+        avgDuration: weeklyAvgDuration,
+        sentiment: weeklySentiment,
+        modes: weeklyModes,
+        topMode: topMode ? { mode: topMode[0], count: topMode[1] } : null,
+        importantNotes: importantNotes.length,
+        recentSummaries,
+      }
     };
   }, [notes]);
 
@@ -197,6 +256,184 @@ export function AnalyticsDashboard() {
             </p>
           </div>
         </div>
+      </div>
+
+      {/* Weekly Report Section */}
+      <div className="bg-[#1a1325] rounded-xl border border-purple-500/10 overflow-hidden">
+        {/* Header */}
+        <button
+          onClick={() => setShowWeeklyReport(!showWeeklyReport)}
+          className="w-full p-5 flex items-center justify-between hover:bg-white/5 transition-colors"
+        >
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-blue-500 to-purple-500 flex items-center justify-center">
+              <FileBarChart className="w-5 h-5 text-white" />
+            </div>
+            <div className="text-left">
+              <h3 className="text-lg font-semibold text-white">Wochenbericht</h3>
+              <p className="text-xs text-zinc-500">{analytics.weeklyReport.dateRange}</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-3">
+            <span className="px-3 py-1 bg-purple-500/20 text-purple-300 rounded-full text-sm">
+              {analytics.weeklyReport.totalNotes} Notizen
+            </span>
+            {showWeeklyReport ? (
+              <ChevronUp className="w-5 h-5 text-zinc-400" />
+            ) : (
+              <ChevronDown className="w-5 h-5 text-zinc-400" />
+            )}
+          </div>
+        </button>
+
+        {/* Report Content */}
+        {showWeeklyReport && (
+          <div className="p-5 pt-0 space-y-5 border-t border-purple-500/10">
+            {/* Quick Stats */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-4">
+              <div className="bg-[#241b2f] rounded-lg p-3 text-center">
+                <FileText className="w-5 h-5 text-purple-400 mx-auto mb-1" />
+                <p className="text-xl font-bold text-white">{analytics.weeklyReport.totalNotes}</p>
+                <p className="text-[10px] text-zinc-500">Notizen erstellt</p>
+              </div>
+              <div className="bg-[#241b2f] rounded-lg p-3 text-center">
+                <Clock className="w-5 h-5 text-blue-400 mx-auto mb-1" />
+                <p className="text-xl font-bold text-white">{formatDuration(analytics.weeklyReport.totalDuration)}</p>
+                <p className="text-[10px] text-zinc-500">Gesamtdauer</p>
+              </div>
+              <div className="bg-[#241b2f] rounded-lg p-3 text-center">
+                <Star className="w-5 h-5 text-yellow-400 mx-auto mb-1" />
+                <p className="text-xl font-bold text-white">{analytics.weeklyReport.importantNotes}</p>
+                <p className="text-[10px] text-zinc-500">Wichtige Notizen</p>
+              </div>
+              <div className="bg-[#241b2f] rounded-lg p-3 text-center">
+                <Target className="w-5 h-5 text-green-400 mx-auto mb-1" />
+                <p className="text-xl font-bold text-white">{formatDuration(analytics.weeklyReport.avgDuration)}</p>
+                <p className="text-[10px] text-zinc-500">Durchschnitt</p>
+              </div>
+            </div>
+
+            {/* Sentiment This Week */}
+            <div className="bg-[#241b2f] rounded-lg p-4">
+              <h4 className="text-sm font-medium text-white mb-3 flex items-center gap-2">
+                <MessageSquare className="w-4 h-4 text-purple-400" />
+                Stimmung diese Woche
+              </h4>
+              <div className="flex items-center gap-4">
+                <div className="flex items-center gap-2">
+                  <Smile className="w-4 h-4 text-green-400" />
+                  <span className="text-sm text-white">{analytics.weeklyReport.sentiment.positive}</span>
+                  <span className="text-xs text-zinc-500">positiv</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Meh className="w-4 h-4 text-zinc-400" />
+                  <span className="text-sm text-white">{analytics.weeklyReport.sentiment.neutral}</span>
+                  <span className="text-xs text-zinc-500">neutral</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Frown className="w-4 h-4 text-red-400" />
+                  <span className="text-sm text-white">{analytics.weeklyReport.sentiment.negative}</span>
+                  <span className="text-xs text-zinc-500">negativ</span>
+                </div>
+              </div>
+              {/* Sentiment Bar */}
+              <div className="mt-3 h-2 bg-[#1a1325] rounded-full overflow-hidden flex">
+                {analytics.weeklyReport.totalNotes > 0 && (
+                  <>
+                    <div
+                      className="h-full bg-green-500"
+                      style={{ width: `${(analytics.weeklyReport.sentiment.positive / analytics.weeklyReport.totalNotes) * 100}%` }}
+                    />
+                    <div
+                      className="h-full bg-zinc-500"
+                      style={{ width: `${(analytics.weeklyReport.sentiment.neutral / analytics.weeklyReport.totalNotes) * 100}%` }}
+                    />
+                    <div
+                      className="h-full bg-red-500"
+                      style={{ width: `${(analytics.weeklyReport.sentiment.negative / analytics.weeklyReport.totalNotes) * 100}%` }}
+                    />
+                  </>
+                )}
+              </div>
+            </div>
+
+            {/* Top Mode */}
+            {analytics.weeklyReport.topMode && analytics.weeklyReport.topMode.count > 0 && (
+              <div className="bg-gradient-to-r from-purple-500/10 to-blue-500/10 rounded-lg p-4 border border-purple-500/20">
+                <p className="text-xs text-zinc-500 mb-1">Meistgenutzter Modus</p>
+                <div className="flex items-center gap-3">
+                  <span className="text-2xl">{MODES[analytics.weeklyReport.topMode.mode as EnrichmentMode]?.icon}</span>
+                  <div>
+                    <p className="text-lg font-semibold text-white">
+                      {MODES[analytics.weeklyReport.topMode.mode as EnrichmentMode]?.name}
+                    </p>
+                    <p className="text-xs text-zinc-400">{analytics.weeklyReport.topMode.count}x verwendet</p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Recent Summaries */}
+            {analytics.weeklyReport.recentSummaries.length > 0 && (
+              <div className="bg-[#241b2f] rounded-lg p-4">
+                <h4 className="text-sm font-medium text-white mb-3">Letzte Zusammenfassungen</h4>
+                <div className="space-y-3">
+                  {analytics.weeklyReport.recentSummaries.map((item) => (
+                    <div key={item.id} className="p-3 bg-[#1a1325] rounded-lg">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="text-sm">{MODES[item.mode as EnrichmentMode]?.icon}</span>
+                        <p className="text-sm font-medium text-white truncate">{item.title}</p>
+                        <span className="text-[10px] text-zinc-500 ml-auto">
+                          {new Date(item.date).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' })}
+                        </span>
+                      </div>
+                      <p className="text-xs text-zinc-400 line-clamp-2">{item.summary}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Export Button */}
+            <button
+              onClick={() => {
+                const report = {
+                  title: 'VelaMind Wochenbericht',
+                  dateRange: analytics.weeklyReport.dateRange,
+                  stats: {
+                    totalNotes: analytics.weeklyReport.totalNotes,
+                    totalDuration: formatDuration(analytics.weeklyReport.totalDuration),
+                    avgDuration: formatDuration(analytics.weeklyReport.avgDuration),
+                    importantNotes: analytics.weeklyReport.importantNotes,
+                  },
+                  sentiment: analytics.weeklyReport.sentiment,
+                  topMode: analytics.weeklyReport.topMode,
+                  summaries: analytics.weeklyReport.recentSummaries,
+                  generatedAt: new Date().toISOString(),
+                };
+                const blob = new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `velamind-wochenbericht-${new Date().toISOString().split('T')[0]}.json`;
+                a.click();
+              }}
+              className="w-full py-3 bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 rounded-lg text-sm font-medium transition flex items-center justify-center gap-2"
+            >
+              <Download className="w-4 h-4" />
+              Wochenbericht exportieren
+            </button>
+
+            {/* Empty State */}
+            {analytics.weeklyReport.totalNotes === 0 && (
+              <div className="text-center py-8">
+                <FileBarChart className="w-12 h-12 text-zinc-600 mx-auto mb-3" />
+                <p className="text-zinc-500">Keine Notizen diese Woche</p>
+                <p className="text-xs text-zinc-600 mt-1">Erstelle Notizen um deinen Wochenbericht zu sehen</p>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
