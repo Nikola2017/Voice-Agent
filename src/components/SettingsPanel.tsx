@@ -39,6 +39,8 @@ export function SettingsPanel() {
     toggleVoiceCommands,
     offlineMode,
     toggleOfflineMode,
+    useWhisper,
+    toggleWhisper,
     auditLog,
     clearAuditLog,
     notes,
@@ -180,12 +182,35 @@ export function SettingsPanel() {
             title="Offline-Modus"
             description="Lokale Verarbeitung ohne Internetverbindung (Beta)"
             action={
-              <ToggleSwitch 
-                enabled={offlineMode} 
-                onToggle={toggleOfflineMode} 
+              <ToggleSwitch
+                enabled={offlineMode}
+                onToggle={toggleOfflineMode}
               />
             }
           />
+
+          {/* Whisper AI */}
+          <SettingRow
+            icon={<Sparkles className="w-5 h-5" />}
+            title="Whisper AI Transkription"
+            description="OpenAI Whisper für bessere Spracherkennung (API Key erforderlich)"
+            action={
+              <ToggleSwitch
+                enabled={useWhisper}
+                onToggle={toggleWhisper}
+              />
+            }
+          />
+          {useWhisper && (
+            <div className="ml-12 -mt-2 mb-4 p-3 rounded-lg bg-green-500/10 border border-green-500/20">
+              <p className="text-xs text-green-400">
+                ✓ Whisper AI aktiviert - Deutlich bessere Transkriptionsgenauigkeit
+              </p>
+              <p className="text-xs text-zinc-500 mt-1">
+                Die Audio wird nach dem Stoppen an OpenAI Whisper gesendet.
+              </p>
+            </div>
+          )}
 
           {/* Language */}
           <SettingRow

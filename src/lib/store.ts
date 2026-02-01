@@ -47,6 +47,9 @@ interface ExtendedAppState extends AppState {
   userProfile: UserProfile | null;
   updateUserProfile: (profile: Partial<UserProfile>) => void;
   clearAuditLog: (period: 'all' | 'month' | 'day') => void;
+  // Whisper settings
+  useWhisper: boolean;
+  toggleWhisper: () => void;
 }
 
 export const useAppStore = create<ExtendedAppState>()(
@@ -68,7 +71,8 @@ export const useAppStore = create<ExtendedAppState>()(
       editingNoteId: null,
       voiceCommandsEnabled: false,
       offlineMode: false,
-      
+      useWhisper: false,
+
       // Date Filter
       dateFilter: { year: null, month: null, day: null },
       
@@ -198,8 +202,12 @@ export const useAppStore = create<ExtendedAppState>()(
         voiceCommandsEnabled: !state.voiceCommandsEnabled 
       })),
 
-      toggleOfflineMode: () => set((state) => ({ 
-        offlineMode: !state.offlineMode 
+      toggleOfflineMode: () => set((state) => ({
+        offlineMode: !state.offlineMode
+      })),
+
+      toggleWhisper: () => set((state) => ({
+        useWhisper: !state.useWhisper
       })),
 
       addComment: (noteId: string, text: string) => {
@@ -342,6 +350,7 @@ export const useAppStore = create<ExtendedAppState>()(
         sidebarCollapsed: state.sidebarCollapsed,
         voiceCommandsEnabled: state.voiceCommandsEnabled,
         offlineMode: state.offlineMode,
+        useWhisper: state.useWhisper,
         auditLog: state.auditLog,
         dateFilter: state.dateFilter,
         userProfile: state.userProfile,

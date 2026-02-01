@@ -1,7 +1,7 @@
 'use client';
 
-import { useCallback, useEffect, useState, useMemo } from 'react';
-import { Mic, Square, Loader2, AlertCircle, Pause, Play, Languages, Globe } from 'lucide-react';
+import { useCallback, useEffect, useState, useMemo, useRef } from 'react';
+import { Mic, Square, Loader2, AlertCircle, Pause, Play, Languages, Globe, Sparkles } from 'lucide-react';
 import { useSpeechRecognition, type TranscriptSegment } from '@/hooks/useSpeechRecognition';
 import { useAppStore } from '@/lib/store';
 import { LANGUAGES, type Note, type TimestampedSegment } from '@/types';
@@ -83,12 +83,18 @@ export function AudioRecorder() {
     currentMode,
     currentLanguage,
     addNote,
+    useWhisper,
   } = useAppStore();
 
   const [processingStatus, setProcessingStatus] = useState('');
   const [autoTranslate, setAutoTranslate] = useState(false);
   const [translateLang, setTranslateLang] = useState<'en' | 'de' | 'bg'>('en');
   const [translatedSegments, setTranslatedSegments] = useState<{[key: number]: string}>({});
+
+  // Whisper audio recording
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const [whisperError, setWhisperError] = useState<string | null>(null);
 
   // Voice command callbacks
   const voiceCallbacks = useMemo(() => ({
@@ -141,17 +147,94 @@ export function AudioRecorder() {
 
   // Handle stop and save
   const handleStop = useCallback(async () => {
-    const finalTranscript = stopRecording();
+    const webSpeechTranscript = stopRecording();
 
     console.log('=== Recording stopped ===');
-    console.log('Transcript:', finalTranscript);
+    console.log('Web Speech Transcript:', webSpeechTranscript);
+
+    // Stop MediaRecorder if Whisper is enabled
+    let whisperTranscript = '';
+    let whisperSegments: TimestampedSegment[] = [];
+
+    if (useWhisper && mediaRecorderRef.current) {
+      setRecordingState('processing');
+      setProcessingStatus('Whisper: Transkribiere Audio...');
+
+      try {
+        // Stop the MediaRecorder
+        await new Promise<void>((resolve) => {
+          if (mediaRecorderRef.current) {
+            mediaRecorderRef.current.onstop = () => resolve();
+            mediaRecorderRef.current.stop();
+          } else {
+            resolve();
+          }
+        });
+
+        // Stop all audio tracks
+        if (mediaRecorderRef.current?.stream) {
+          mediaRecorderRef.current.stream.getTracks().forEach(track => track.stop());
+        }
+
+        // Create audio blob
+        const audioBlob = new Blob(audioChunksRef.current, {
+          type: mediaRecorderRef.current?.mimeType || 'audio/webm'
+        });
+
+        console.log('Whisper: Audio blob size:', audioBlob.size);
+
+        if (audioBlob.size > 0) {
+          // Send to Whisper API
+          const formData = new FormData();
+          formData.append('audio', audioBlob, 'recording.webm');
+          formData.append('language', currentLanguage);
+
+          const response = await fetch('/api/whisper', {
+            method: 'POST',
+            body: formData,
+          });
+
+          const data = await response.json();
+
+          if (data.success) {
+            whisperTranscript = data.transcript;
+            whisperSegments = data.segments?.map((seg: { timestamp: number; text: string }) => ({
+              timestamp: seg.timestamp,
+              text: seg.text,
+              translation: undefined,
+            })) || [];
+            console.log('Whisper transcript:', whisperTranscript);
+          } else {
+            console.error('Whisper API error:', data.error);
+            setWhisperError(data.message || 'Whisper Transkription fehlgeschlagen');
+          }
+        }
+      } catch (err) {
+        console.error('Whisper processing error:', err);
+        setWhisperError('Whisper Verarbeitung fehlgeschlagen');
+      }
+
+      mediaRecorderRef.current = null;
+      audioChunksRef.current = [];
+    }
+
+    // Use Whisper transcript if available, otherwise fall back to Web Speech
+    const finalTranscript = useWhisper && whisperTranscript ? whisperTranscript : webSpeechTranscript;
 
     // Build timestamped segments with translations
-    const savedTimestampedSegments: TimestampedSegment[] = transcriptSegments.map((segment, index) => ({
-      timestamp: segment.timestamp,
-      text: segment.text,
-      translation: translatedSegments[index] || undefined,
-    }));
+    let savedTimestampedSegments: TimestampedSegment[];
+
+    if (useWhisper && whisperSegments.length > 0) {
+      // Use Whisper segments
+      savedTimestampedSegments = whisperSegments;
+    } else {
+      // Use Web Speech segments with translations
+      savedTimestampedSegments = transcriptSegments.map((segment, index) => ({
+        timestamp: segment.timestamp,
+        text: segment.text,
+        translation: translatedSegments[index] || undefined,
+      }));
+    }
 
     if (!finalTranscript || finalTranscript.trim().length === 0) {
       setRecordingState('idle');
@@ -214,16 +297,43 @@ export function AudioRecorder() {
       resetTranscript();
       setTranslatedSegments({});
     }
-  }, [stopRecording, currentLanguage, currentMode, recordingTime, setRecordingState, addNote, resetTranscript, transcriptSegments, translatedSegments, autoTranslate, translateLang]);
+  }, [stopRecording, currentLanguage, currentMode, recordingTime, setRecordingState, addNote, resetTranscript, transcriptSegments, translatedSegments, autoTranslate, translateLang, useWhisper]);
 
   // Handle start
-  const handleStart = useCallback(() => {
+  const handleStart = useCallback(async () => {
     console.log('=== Starting recording ===');
     resetTranscript();
     setTranslatedSegments({});
+    setWhisperError(null);
+
+    // Start MediaRecorder for Whisper if enabled
+    if (useWhisper) {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const mediaRecorder = new MediaRecorder(stream, {
+          mimeType: MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/mp4'
+        });
+
+        audioChunksRef.current = [];
+
+        mediaRecorder.ondataavailable = (event) => {
+          if (event.data.size > 0) {
+            audioChunksRef.current.push(event.data);
+          }
+        };
+
+        mediaRecorderRef.current = mediaRecorder;
+        mediaRecorder.start(1000); // Capture in 1-second chunks
+        console.log('Whisper: MediaRecorder started');
+      } catch (err) {
+        console.error('Failed to start MediaRecorder:', err);
+        setWhisperError('Mikrofon-Zugriff fehlgeschlagen');
+      }
+    }
+
     startRecording();
     setRecordingState('recording');
-  }, [resetTranscript, startRecording, setRecordingState]);
+  }, [resetTranscript, startRecording, setRecordingState, useWhisper]);
 
   // Toggle recording
   const handleRecordingToggle = useCallback(() => {
@@ -324,11 +434,19 @@ export function AudioRecorder() {
 
   return (
     <div className="flex flex-col items-center">
+      {/* Whisper Indicator */}
+      {useWhisper && (
+        <div className="mb-4 px-4 py-2 rounded-lg bg-green-500/20 border border-green-500/30 flex items-center gap-2 text-green-400 text-sm">
+          <Sparkles className="w-4 h-4" />
+          Whisper AI aktiviert - Bessere Transkription
+        </div>
+      )}
+
       {/* Error */}
-      {error && (
+      {(error || whisperError) && (
         <div className="mb-4 px-4 py-2 rounded-lg bg-red-500/20 border border-red-500/30 flex items-center gap-2 text-red-400 text-sm">
           <AlertCircle className="w-4 h-4" />
-          {error}
+          {error || whisperError}
         </div>
       )}
 
