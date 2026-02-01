@@ -4,9 +4,11 @@
   "description": "VelaMind - Voice Intelligence for Team Meetings",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev --hostname 127.0.0.1",
+    "dev:network": "next dev",
     "build": "next build",
-    "start": "next start",
+    "start": "next start --hostname 127.0.0.1",
+    "start:network": "next start",
     "lint": "next lint"
   },
   "dependencies": {

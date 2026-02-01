@@ -14,6 +14,7 @@ import {
   ChevronDown,
   User,
   LogOut,
+  Lock,
   BarChart3,
   Settings,
   Mic,
@@ -635,7 +636,18 @@ export function Sidebar({ currentView, onViewChange }: SidebarProps) {
               )}
             </AnimatePresence>
           </button>
-          <button 
+          <button
+            onClick={() => {
+              // Clear session and reload to show lock screen
+              sessionStorage.removeItem('velamind_session');
+              window.location.reload();
+            }}
+            className="p-2 rounded-lg hover:bg-white/5 text-yellow-500 hover:text-yellow-400 transition-colors"
+            title="App sperren"
+          >
+            <Lock className="w-4 h-4" />
+          </button>
+          <button
             onClick={logout}
             className="p-2 rounded-lg hover:bg-white/5 text-zinc-500 hover:text-white transition-colors"
             title="Logout"
