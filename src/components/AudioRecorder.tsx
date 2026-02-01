@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState, useMemo } from 'react';
 import { Mic, Square, Loader2, AlertCircle, Pause, Play, Languages, Globe } from 'lucide-react';
 import { useSpeechRecognition, type TranscriptSegment } from '@/hooks/useSpeechRecognition';
 import { useAppStore } from '@/lib/store';
-import { LANGUAGES, type Note } from '@/types';
+import { LANGUAGES, type Note, type TimestampedSegment } from '@/types';
 
 function formatTime(seconds: number): string {
   const mins = Math.floor(seconds / 60);
@@ -146,6 +146,13 @@ export function AudioRecorder() {
     console.log('=== Recording stopped ===');
     console.log('Transcript:', finalTranscript);
 
+    // Build timestamped segments with translations
+    const savedTimestampedSegments: TimestampedSegment[] = transcriptSegments.map((segment, index) => ({
+      timestamp: segment.timestamp,
+      text: segment.text,
+      translation: translatedSegments[index] || undefined,
+    }));
+
     if (!finalTranscript || finalTranscript.trim().length === 0) {
       setRecordingState('idle');
       setTranslatedSegments({});
@@ -169,6 +176,9 @@ export function AudioRecorder() {
         createdAt: new Date(),
         updatedAt: new Date(),
         duration: recordingTime,
+        // Save timestamped segments with translations
+        timestampedSegments: savedTimestampedSegments.length > 0 ? savedTimestampedSegments : undefined,
+        translationLanguage: autoTranslate && Object.keys(translatedSegments).length > 0 ? translateLang : undefined,
       };
 
       addNote(newNote);
@@ -195,13 +205,16 @@ export function AudioRecorder() {
         createdAt: new Date(),
         updatedAt: new Date(),
         duration: recordingTime,
+        // Save timestamped segments with translations even on error
+        timestampedSegments: savedTimestampedSegments.length > 0 ? savedTimestampedSegments : undefined,
+        translationLanguage: autoTranslate && Object.keys(translatedSegments).length > 0 ? translateLang : undefined,
       };
       addNote(newNote);
       setRecordingState('idle');
       resetTranscript();
       setTranslatedSegments({});
     }
-  }, [stopRecording, currentLanguage, currentMode, recordingTime, setRecordingState, addNote, resetTranscript]);
+  }, [stopRecording, currentLanguage, currentMode, recordingTime, setRecordingState, addNote, resetTranscript, transcriptSegments, translatedSegments, autoTranslate, translateLang]);
 
   // Handle start
   const handleStart = useCallback(() => {

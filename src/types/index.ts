@@ -66,6 +66,19 @@ export interface TranscriptSegment {
   endTime: number;
 }
 
+// Timestamped transcript segment with optional translation
+export interface TimestampedSegment {
+  timestamp: number;  // Recording time in seconds
+  text: string;       // Original transcribed text
+  translation?: string;  // Translated text (if auto-translate was enabled)
+}
+
+// Translation info for saved notes
+export interface TranslationInfo {
+  targetLanguage: 'en' | 'de' | 'bg';
+  segments: TimestampedSegment[];
+}
+
 // Comments & Collaboration
 export interface Comment {
   id: string;
@@ -107,6 +120,9 @@ export interface Note {
   sharedWith?: string[];
   isImportant?: boolean;
   tags?: string[];
+  // Timestamped transcript with translations
+  timestampedSegments?: TimestampedSegment[];
+  translationLanguage?: 'en' | 'de' | 'bg';  // Target language if auto-translate was used
 }
 
 // Analytics Types

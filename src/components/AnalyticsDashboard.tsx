@@ -80,7 +80,7 @@ export function AnalyticsDashboard() {
     const topMode = Object.entries(weeklyModes).sort((a, b) => b[1] - a[1])[0];
 
     // Important notes this week (starred)
-    const importantNotes = weeklyNotes.filter(n => n.starred);
+    const importantNotes = weeklyNotes.filter(n => n.isImportant);
 
     // Recent summaries
     const recentSummaries = weeklyNotes

@@ -32,6 +32,13 @@ import {
 import { useAppStore } from '@/lib/store';
 import type { Note } from '@/types';
 import { SPEAKER_COLORS } from '@/types';
+
+// Helper function to format timestamp as MM:SS
+function formatTime(seconds: number): string {
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  return `${mins}:${secs.toString().padStart(2, '0')}`;
+}
 import { analyzeSentiment, getSentimentEmoji, type SentimentResult } from '@/lib/sentimentAnalysis';
 
 interface NoteCardProps {
@@ -1050,6 +1057,16 @@ ${note.summary || 'Keine Zusammenfassung verfügbar.'}
                 {showDeTranslation && translatedDeText && (
                   <span className="px-2 py-0.5 rounded bg-yellow-500/20 text-yellow-400 text-xs">🇩🇪 Deutsch</span>
                 )}
+                {/* Show saved translation language indicator */}
+                {note.timestampedSegments && note.translationLanguage && !showTranslation && !showBgTranslation && !showDeTranslation && (
+                  <span className={`px-2 py-0.5 rounded text-xs ${
+                    note.translationLanguage === 'en' ? 'bg-blue-500/20 text-blue-400' :
+                    note.translationLanguage === 'bg' ? 'bg-orange-500/20 text-orange-400' :
+                    'bg-yellow-500/20 text-yellow-400'
+                  }`}>
+                    → {note.translationLanguage === 'en' ? '🇬🇧 EN' : note.translationLanguage === 'bg' ? '🇧🇬 BG' : '🇩🇪 DE'}
+                  </span>
+                )}
               </h4>
               <div className="flex items-center gap-2">
                 {(showTranslation || showBgTranslation || showDeTranslation) && (
@@ -1069,15 +1086,36 @@ ${note.summary || 'Keine Zusammenfassung verfügbar.'}
                 </button>
               </div>
             </div>
-            <p className="text-sm text-zinc-300 bg-[#1a1325] p-3 rounded-lg border border-purple-500/10">
-              {showTranslation && translatedText
-                ? translatedText
-                : showBgTranslation && translatedBgText
-                  ? translatedBgText
-                  : showDeTranslation && translatedDeText
-                    ? translatedDeText
-                    : note.rawTranscript}
-            </p>
+            {/* Display timestamped segments if available */}
+            {note.timestampedSegments && note.timestampedSegments.length > 0 && !showTranslation && !showBgTranslation && !showDeTranslation ? (
+              <div className="bg-[#1a1325] p-3 rounded-lg border border-purple-500/10 max-h-80 overflow-y-auto">
+                {note.timestampedSegments.map((segment, index) => (
+                  <div key={index} className="flex gap-3 py-2 border-b border-purple-500/5 last:border-0">
+                    <span className="text-xs font-mono text-purple-400 w-12 flex-shrink-0">
+                      {formatTime(segment.timestamp)}
+                    </span>
+                    <div className="flex-1">
+                      <p className="text-sm text-zinc-300">{segment.text}</p>
+                      {segment.translation && note.translationLanguage && (
+                        <p className="text-xs text-blue-400 mt-1">
+                          → {segment.translation}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm text-zinc-300 bg-[#1a1325] p-3 rounded-lg border border-purple-500/10">
+                {showTranslation && translatedText
+                  ? translatedText
+                  : showBgTranslation && translatedBgText
+                    ? translatedBgText
+                    : showDeTranslation && translatedDeText
+                      ? translatedDeText
+                      : note.rawTranscript}
+              </p>
+            )}
           </div>
         )}
 

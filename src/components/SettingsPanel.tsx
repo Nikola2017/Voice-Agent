@@ -406,7 +406,7 @@ export function SettingsPanel() {
                     <td className="p-2 text-white">Voice Cloning</td>
                     <td className="p-2">ElevenLabs</td>
                     <td className="p-2">~$0.30/1000 Zeichen</td>
-                    <td className="p-2"><AlertTriangle className="w-4 h-4 text-yellow-400" title="Coming Soon" /></td>
+                    <td className="p-2"><span title="Coming Soon"><AlertTriangle className="w-4 h-4 text-yellow-400" /></span></td>
                   </tr>
                 </tbody>
               </table>
