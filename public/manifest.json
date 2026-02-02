@@ -1,0 +1,11 @@
+{
+  "name": "VelaMind - Voice Intelligence",
+  "short_name": "VelaMind",
+  "description": "Transform team meetings into structured notes with AI",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0f0a15",
+  "theme_color": "#8b5cf6",
+  "orientation": "portrait-primary",
+  "categories": ["productivity", "business", "utilities"]
+}
