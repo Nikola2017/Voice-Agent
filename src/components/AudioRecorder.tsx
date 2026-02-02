@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState, useMemo, useRef } from 'react';
-import { Mic, Square, Loader2, AlertCircle, Pause, Play, Languages, Globe, Sparkles } from 'lucide-react';
+import { Mic, Square, Loader2, AlertCircle, Pause, Play, Languages, Globe, Sparkles, Monitor } from 'lucide-react';
 import { useSpeechRecognition, type TranscriptSegment } from '@/hooks/useSpeechRecognition';
 import { useAppStore } from '@/lib/store';
 import { LANGUAGES, type Note, type TimestampedSegment } from '@/types';
@@ -117,6 +117,7 @@ export function AudioRecorder() {
     currentLanguage,
     addNote,
     useWhisper,
+    useSystemAudio,
   } = useAppStore();
 
   const [processingStatus, setProcessingStatus] = useState('');
@@ -128,6 +129,7 @@ export function AudioRecorder() {
   // Whisper audio recording
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
+  const systemStreamRef = useRef<MediaStream | null>(null);
   const [whisperError, setWhisperError] = useState<string | null>(null);
 
   // Voice command callbacks
@@ -163,8 +165,9 @@ export function AudioRecorder() {
   } = useSpeechRecognition(currentLanguage, voiceCallbacks);
 
   // Auto-translate new segments - translate ALL segments that don't have translations
+  // Skip live translation when Whisper is enabled (segments will be re-transcribed anyway)
   useEffect(() => {
-    if (autoTranslate && transcriptSegments.length > 0) {
+    if (autoTranslate && transcriptSegments.length > 0 && !useWhisper) {
       // Translate all segments that don't have translations yet and aren't currently being translated
       transcriptSegments.forEach((segment, index) => {
         if (!translatedSegments[index] && !translatingSegments[index]) {
@@ -190,7 +193,7 @@ export function AudioRecorder() {
         }
       });
     }
-  }, [transcriptSegments, autoTranslate, translateLang, translatedSegments, translatingSegments, currentLanguage]);
+  }, [transcriptSegments, autoTranslate, translateLang, translatedSegments, translatingSegments, currentLanguage, useWhisper]);
 
   // Handle stop and save
   const handleStop = useCallback(async () => {
@@ -221,6 +224,12 @@ export function AudioRecorder() {
         // Stop all audio tracks
         if (mediaRecorderRef.current?.stream) {
           mediaRecorderRef.current.stream.getTracks().forEach(track => track.stop());
+        }
+
+        // Stop system audio stream if it was used
+        if (systemStreamRef.current) {
+          systemStreamRef.current.getTracks().forEach(track => track.stop());
+          systemStreamRef.current = null;
         }
 
         // Create audio blob
@@ -280,15 +289,12 @@ export function AudioRecorder() {
     console.log('translateLang:', translateLang);
 
     if (useWhisper && whisperSegments.length > 0) {
-      // Use Whisper segments - but try to match translations from Web Speech if available
-      savedTimestampedSegments = whisperSegments.map((segment, index) => {
-        // Try to find matching translation from Web Speech translations
-        const webSpeechTranslation = translatedSegments[index];
-        return {
-          ...segment,
-          translation: webSpeechTranslation || undefined,
-        };
-      });
+      // Use Whisper segments - translations will be fetched fresh below
+      // Don't try to match with Web Speech translations (they have different segment boundaries)
+      savedTimestampedSegments = whisperSegments.map((segment) => ({
+        ...segment,
+        translation: undefined, // Will be translated fresh below
+      }));
     } else {
       // Use Web Speech segments with translations
       savedTimestampedSegments = transcriptSegments.map((segment, index) => ({
@@ -418,8 +424,60 @@ export function AudioRecorder() {
     // Start MediaRecorder for Whisper if enabled
     if (useWhisper) {
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        const mediaRecorder = new MediaRecorder(stream, {
+        let combinedStream: MediaStream;
+
+        if (useSystemAudio) {
+          // Capture system audio (from meetings, browser tabs, etc.)
+          console.log('Whisper: Requesting system audio...');
+          try {
+            const displayStream = await navigator.mediaDevices.getDisplayMedia({
+              video: { width: 1, height: 1 }, // Minimal video (required by some browsers)
+              audio: {
+                echoCancellation: false,
+                noiseSuppression: false,
+                autoGainControl: false,
+              }
+            });
+
+            // Stop the video track immediately (we only want audio)
+            displayStream.getVideoTracks().forEach(track => track.stop());
+
+            // Also get microphone audio to capture user's voice
+            const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+            // Combine system audio and microphone using AudioContext
+            const audioContext = new AudioContext();
+            const destination = audioContext.createMediaStreamDestination();
+
+            // Add system audio
+            const systemAudioTracks = displayStream.getAudioTracks();
+            if (systemAudioTracks.length > 0) {
+              const systemSource = audioContext.createMediaStreamSource(new MediaStream(systemAudioTracks));
+              systemSource.connect(destination);
+              console.log('Whisper: System audio connected');
+            } else {
+              console.warn('Whisper: No system audio tracks available');
+            }
+
+            // Add microphone audio
+            const micSource = audioContext.createMediaStreamSource(micStream);
+            micSource.connect(destination);
+            console.log('Whisper: Microphone audio connected');
+
+            combinedStream = destination.stream;
+            systemStreamRef.current = displayStream; // Keep reference to stop later
+
+          } catch (displayErr) {
+            console.warn('System audio not available, falling back to microphone only:', displayErr);
+            setWhisperError('System-Audio nicht verfügbar - nur Mikrofon aktiv');
+            combinedStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          }
+        } else {
+          // Just microphone
+          combinedStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        }
+
+        const mediaRecorder = new MediaRecorder(combinedStream, {
           mimeType: MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/mp4'
         });
 
@@ -433,7 +491,7 @@ export function AudioRecorder() {
 
         mediaRecorderRef.current = mediaRecorder;
         mediaRecorder.start(1000); // Capture in 1-second chunks
-        console.log('Whisper: MediaRecorder started');
+        console.log('Whisper: MediaRecorder started' + (useSystemAudio ? ' with system audio' : ''));
       } catch (err) {
         console.error('Failed to start MediaRecorder:', err);
         setWhisperError('Mikrofon-Zugriff fehlgeschlagen');
@@ -442,7 +500,7 @@ export function AudioRecorder() {
 
     startRecording();
     setRecordingState('recording');
-  }, [resetTranscript, startRecording, setRecordingState, useWhisper]);
+  }, [resetTranscript, startRecording, setRecordingState, useWhisper, useSystemAudio]);
 
   // Toggle recording
   const handleRecordingToggle = useCallback(() => {
@@ -493,6 +551,18 @@ export function AudioRecorder() {
       }
       if (e.code === 'Escape' && isRecording) {
         stopRecording();
+        // Stop MediaRecorder if running
+        if (mediaRecorderRef.current) {
+          mediaRecorderRef.current.stop();
+          mediaRecorderRef.current.stream.getTracks().forEach(track => track.stop());
+          mediaRecorderRef.current = null;
+        }
+        // Stop system audio stream if running
+        if (systemStreamRef.current) {
+          systemStreamRef.current.getTracks().forEach(track => track.stop());
+          systemStreamRef.current = null;
+        }
+        audioChunksRef.current = [];
         setRecordingState('idle');
         resetTranscript();
         setTranslatedSegments({});
@@ -549,6 +619,14 @@ export function AudioRecorder() {
         <div className="mb-4 px-4 py-2 rounded-lg bg-green-500/20 border border-green-500/30 flex items-center gap-2 text-green-400 text-sm">
           <Sparkles className="w-4 h-4" />
           Whisper AI aktiviert - Bessere Transkription
+        </div>
+      )}
+
+      {/* System Audio Indicator */}
+      {useSystemAudio && (
+        <div className="mb-4 px-4 py-2 rounded-lg bg-blue-500/20 border border-blue-500/30 flex items-center gap-2 text-blue-400 text-sm">
+          <Monitor className="w-4 h-4" />
+          System-Audio aktiviert - Erfasst Meeting-Teilnehmer
         </div>
       )}
 

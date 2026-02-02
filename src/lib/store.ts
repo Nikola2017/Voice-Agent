@@ -50,6 +50,9 @@ interface ExtendedAppState extends AppState {
   // Whisper settings
   useWhisper: boolean;
   toggleWhisper: () => void;
+  // System audio recording (for capturing meeting audio)
+  useSystemAudio: boolean;
+  toggleSystemAudio: () => void;
 }
 
 export const useAppStore = create<ExtendedAppState>()(
@@ -72,6 +75,7 @@ export const useAppStore = create<ExtendedAppState>()(
       voiceCommandsEnabled: false,
       offlineMode: false,
       useWhisper: false,
+      useSystemAudio: false,
 
       // Date Filter
       dateFilter: { year: null, month: null, day: null },
@@ -208,6 +212,10 @@ export const useAppStore = create<ExtendedAppState>()(
 
       toggleWhisper: () => set((state) => ({
         useWhisper: !state.useWhisper
+      })),
+
+      toggleSystemAudio: () => set((state) => ({
+        useSystemAudio: !state.useSystemAudio
       })),
 
       addComment: (noteId: string, text: string) => {
@@ -351,6 +359,7 @@ export const useAppStore = create<ExtendedAppState>()(
         voiceCommandsEnabled: state.voiceCommandsEnabled,
         offlineMode: state.offlineMode,
         useWhisper: state.useWhisper,
+        useSystemAudio: state.useSystemAudio,
         auditLog: state.auditLog,
         dateFilter: state.dateFilter,
         userProfile: state.userProfile,

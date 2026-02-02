@@ -21,7 +21,8 @@ import {
   AlertTriangle,
   Brain,
   AudioLines,
-  Cloud
+  Cloud,
+  Monitor
 } from 'lucide-react';
 import { useAppStore } from '@/lib/store';
 import { LANGUAGES } from '@/types';
@@ -41,6 +42,8 @@ export function SettingsPanel() {
     toggleOfflineMode,
     useWhisper,
     toggleWhisper,
+    useSystemAudio,
+    toggleSystemAudio,
     auditLog,
     clearAuditLog,
     notes,
@@ -209,6 +212,34 @@ export function SettingsPanel() {
               <p className="text-xs text-zinc-500 mt-1">
                 Die Audio wird nach dem Stoppen an OpenAI Whisper gesendet.
               </p>
+            </div>
+          )}
+
+          {/* System Audio Recording */}
+          <SettingRow
+            icon={<Monitor className="w-5 h-5" />}
+            title="System-Audio aufnehmen"
+            description="Meeting-Audio von anderen Teilnehmern erfassen (erfordert Whisper)"
+            action={
+              <ToggleSwitch
+                enabled={useSystemAudio}
+                onToggle={toggleSystemAudio}
+              />
+            }
+          />
+          {useSystemAudio && (
+            <div className="ml-12 -mt-2 mb-4 p-3 rounded-lg bg-blue-500/10 border border-blue-500/20">
+              <p className="text-xs text-blue-400">
+                ✓ System-Audio aktiviert - Erfasst auch Meeting-Teilnehmer
+              </p>
+              <p className="text-xs text-zinc-500 mt-1">
+                Beim Start wird ein Bildschirm/Tab-Teilen-Dialog erscheinen. Mikrofon + System-Audio werden kombiniert.
+              </p>
+              {!useWhisper && (
+                <p className="text-xs text-yellow-400 mt-2">
+                  ⚠️ Aktiviere auch Whisper AI für beste Ergebnisse
+                </p>
+              )}
             </div>
           )}
 
