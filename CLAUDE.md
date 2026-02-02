@@ -95,6 +95,7 @@ npm run lint
 | Hook | Purpose |
 |------|---------|
 | `useSpeechRecognition.ts` | Web Speech API wrapper with ref-based state management |
+| `useWhisperRecording.ts` | Whisper API recording with system audio capture support |
 | `useVoiceCommands.ts` | Voice command listener (start/stop/mark/help) |
 
 ## Architecture & Patterns
@@ -117,14 +118,38 @@ const finalTranscriptRef = useRef<string>('');
 const interimTranscriptRef = useRef<string>('');
 ```
 
-### API Pattern (Summarization)
+### API Endpoints
+
 ```typescript
-// POST /api/summarize
-// Accepts: { text: string, language: 'de'|'en'|'bg', mode: string }
-// Returns: { title, summary, sentiment } or falls back to local generation
+// POST /api/summarize - AI Summarization
+// Accepts: { transcript: string, language: 'de'|'en'|'bg' }
+// Returns: { success, title, summary, sentiment }
+
+// POST /api/whisper - Whisper Transcription
+// Accepts: FormData with audio file and language
+// Returns: { success, text, segments[], duration }
+
+// POST /api/translate - Segment Translation
+// Accepts: { segments: WhisperSegment[], targetLanguage, sourceLanguage }
+// Returns: { success, segments[], fullTranslatedText }
+// Note: Each segment gets its own fresh translation to prevent mismatch bugs
 ```
 
 ## Key Features & Modes
+
+### Recording Modes
+- **Live Mode** (Web Speech API) - Real-time transcription with live preview
+- **Whisper Mode** (OpenAI Whisper) - High-quality transcription after recording stops
+
+### Audio Sources (Whisper Mode only)
+- **Microphone** - Capture your voice
+- **System Audio** - Capture meeting audio from other participants (screen share)
+- **Mic + System** - Capture both simultaneously
+
+### Translation Features
+- **Auto-translate** - Translate Whisper segments after recording
+- **Retranslate** - Re-translate existing notes with fresh translations for each segment
+- **Per-segment translations** - Each segment gets its own dedicated translation (fixes mismatch bugs)
 
 ### 6 Enrichment Modes
 1. **Smart Notes** (purple) - General note-taking
