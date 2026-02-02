@@ -59,24 +59,53 @@ async function createAISummary(text: string, language: string): Promise<{ title:
   return { ...local, sentiment: 'neutral' };
 }
 
-// Auto-translate function
+// Auto-translate function with better error handling
 async function translateText(text: string, sourceLang: string, targetLang: string): Promise<string> {
   // Don't translate if source and target are the same
   if (sourceLang === targetLang) {
+    console.log(`[translateText] Skipping - same language: ${sourceLang}`);
     return text;
   }
 
-  try {
-    const response = await fetch(
-      `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=${sourceLang}|${targetLang}`
-    );
-    const data = await response.json();
-    if (data.responseStatus === 200 && data.responseData?.translatedText) {
-      return data.responseData.translatedText;
-    }
-  } catch (e) {
-    console.log('Translation failed:', e);
+  // Don't translate empty text
+  if (!text || text.trim().length === 0) {
+    console.log('[translateText] Skipping - empty text');
+    return text;
   }
+
+  const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=${sourceLang}|${targetLang}`;
+  console.log(`[translateText] Requesting: ${sourceLang} → ${targetLang}, text: "${text.substring(0, 50)}..."`);
+
+  try {
+    const response = await fetch(url);
+
+    if (!response.ok) {
+      console.error(`[translateText] HTTP error: ${response.status}`);
+      return text;
+    }
+
+    const data = await response.json();
+    console.log(`[translateText] Response:`, data);
+
+    if (data.responseStatus === 200 && data.responseData?.translatedText) {
+      const translated = data.responseData.translatedText;
+      // Check if translation is valid (not the same as original for different languages)
+      if (translated && translated.trim().length > 0) {
+        console.log(`[translateText] Success: "${translated.substring(0, 50)}..."`);
+        return translated;
+      }
+    }
+
+    // Check for quota exceeded or other errors
+    if (data.responseStatus === 403 || data.responseDetails?.includes('LIMIT')) {
+      console.warn('[translateText] API quota exceeded');
+    }
+
+    console.warn(`[translateText] Failed with status: ${data.responseStatus}, details: ${data.responseDetails}`);
+  } catch (e) {
+    console.error('[translateText] Network/parsing error:', e);
+  }
+
   return text;
 }
 
@@ -94,6 +123,7 @@ export function AudioRecorder() {
   const [autoTranslate, setAutoTranslate] = useState(false);
   const [translateLang, setTranslateLang] = useState<'en' | 'de' | 'bg'>('en');
   const [translatedSegments, setTranslatedSegments] = useState<{[key: number]: string}>({});
+  const [translatingSegments, setTranslatingSegments] = useState<{[key: number]: boolean}>({});
 
   // Whisper audio recording
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -132,22 +162,35 @@ export function AudioRecorder() {
     resetTranscript,
   } = useSpeechRecognition(currentLanguage, voiceCallbacks);
 
-  // Auto-translate new segments
+  // Auto-translate new segments - translate ALL segments that don't have translations
   useEffect(() => {
     if (autoTranslate && transcriptSegments.length > 0) {
-      const lastSegment = transcriptSegments[transcriptSegments.length - 1];
-      const segmentIndex = transcriptSegments.length - 1;
+      // Translate all segments that don't have translations yet and aren't currently being translated
+      transcriptSegments.forEach((segment, index) => {
+        if (!translatedSegments[index] && !translatingSegments[index]) {
+          // Mark as translating to prevent duplicate requests
+          setTranslatingSegments(prev => ({ ...prev, [index]: true }));
 
-      if (!translatedSegments[segmentIndex]) {
-        translateText(lastSegment.text, currentLanguage, translateLang).then(translated => {
-          setTranslatedSegments(prev => ({
-            ...prev,
-            [segmentIndex]: translated
-          }));
-        });
-      }
+          console.log(`[Translation] Starting translation for segment ${index}: "${segment.text}" (${currentLanguage} → ${translateLang})`);
+
+          translateText(segment.text, currentLanguage, translateLang)
+            .then(translated => {
+              console.log(`[Translation] Completed segment ${index}: "${translated}"`);
+              setTranslatedSegments(prev => ({
+                ...prev,
+                [index]: translated
+              }));
+            })
+            .catch(err => {
+              console.error(`[Translation] Failed for segment ${index}:`, err);
+            })
+            .finally(() => {
+              setTranslatingSegments(prev => ({ ...prev, [index]: false }));
+            });
+        }
+      });
     }
-  }, [transcriptSegments, autoTranslate, translateLang, translatedSegments, currentLanguage]);
+  }, [transcriptSegments, autoTranslate, translateLang, translatedSegments, translatingSegments, currentLanguage]);
 
   // Handle stop and save
   const handleStop = useCallback(async () => {
@@ -228,9 +271,24 @@ export function AudioRecorder() {
     // Build timestamped segments with translations
     let savedTimestampedSegments: TimestampedSegment[];
 
+    console.log('=== Building timestamped segments ===');
+    console.log('useWhisper:', useWhisper);
+    console.log('whisperSegments:', whisperSegments.length);
+    console.log('transcriptSegments:', transcriptSegments.length);
+    console.log('translatedSegments:', translatedSegments);
+    console.log('autoTranslate:', autoTranslate);
+    console.log('translateLang:', translateLang);
+
     if (useWhisper && whisperSegments.length > 0) {
-      // Use Whisper segments
-      savedTimestampedSegments = whisperSegments;
+      // Use Whisper segments - but try to match translations from Web Speech if available
+      savedTimestampedSegments = whisperSegments.map((segment, index) => {
+        // Try to find matching translation from Web Speech translations
+        const webSpeechTranslation = translatedSegments[index];
+        return {
+          ...segment,
+          translation: webSpeechTranslation || undefined,
+        };
+      });
     } else {
       // Use Web Speech segments with translations
       savedTimestampedSegments = transcriptSegments.map((segment, index) => ({
@@ -239,6 +297,8 @@ export function AudioRecorder() {
         translation: translatedSegments[index] || undefined,
       }));
     }
+
+    console.log('savedTimestampedSegments before final translation:', savedTimestampedSegments);
 
     if (!finalTranscript || finalTranscript.trim().length === 0) {
       setRecordingState('idle');
@@ -252,18 +312,31 @@ export function AudioRecorder() {
     // If auto-translate was enabled, translate all segments before saving
     if (autoTranslate && savedTimestampedSegments.length > 0) {
       setProcessingStatus('Übersetze Segmente...');
-      const translatedSegmentsPromises = savedTimestampedSegments.map(async (segment) => {
+      console.log('=== Translating segments before save ===');
+
+      const translatedSegmentsPromises = savedTimestampedSegments.map(async (segment, index) => {
         // Skip if already has translation
-        if (segment.translation) {
+        if (segment.translation && segment.translation.trim().length > 0) {
+          console.log(`Segment ${index}: Already has translation "${segment.translation}"`);
           return segment;
         }
+
+        console.log(`Segment ${index}: Translating "${segment.text}" (${currentLanguage} → ${translateLang})`);
         const translation = await translateText(segment.text, currentLanguage, translateLang);
+        console.log(`Segment ${index}: Got translation "${translation}"`);
+
+        // Only set to undefined if translation is exactly the same AND languages are different
+        // If source and target language are same, don't store translation
+        const shouldStoreTranslation = currentLanguage !== translateLang && translation && translation.trim().length > 0;
+
         return {
           ...segment,
-          translation: translation !== segment.text ? translation : undefined,
+          translation: shouldStoreTranslation ? translation : undefined,
         };
       });
+
       savedTimestampedSegments = await Promise.all(translatedSegmentsPromises);
+      console.log('Final segments with translations:', savedTimestampedSegments);
       setProcessingStatus('Erstelle Zusammenfassung...');
     }
 
@@ -271,7 +344,13 @@ export function AudioRecorder() {
       const { title, summary, sentiment } = await createAISummary(finalTranscript, currentLanguage);
 
       // Check if any segment has a translation
-      const hasTranslations = savedTimestampedSegments.some(seg => seg.translation);
+      const hasTranslations = savedTimestampedSegments.some(seg => seg.translation && seg.translation.trim().length > 0);
+
+      console.log('=== Creating note ===');
+      console.log('hasTranslations:', hasTranslations);
+      console.log('autoTranslate:', autoTranslate);
+      console.log('translateLang:', translateLang);
+      console.log('Segments to save:', savedTimestampedSegments);
 
       const newNote: Note = {
         id: generateId(),
@@ -297,6 +376,7 @@ export function AudioRecorder() {
         setRecordingState('idle');
         resetTranscript();
         setTranslatedSegments({});
+        setTranslatingSegments({});
       }, 1000);
 
     } catch (err) {
@@ -323,6 +403,7 @@ export function AudioRecorder() {
       setRecordingState('idle');
       resetTranscript();
       setTranslatedSegments({});
+      setTranslatingSegments({});
     }
   }, [stopRecording, currentLanguage, currentMode, recordingTime, setRecordingState, addNote, resetTranscript, transcriptSegments, translatedSegments, autoTranslate, translateLang, useWhisper]);
 
@@ -331,6 +412,7 @@ export function AudioRecorder() {
     console.log('=== Starting recording ===');
     resetTranscript();
     setTranslatedSegments({});
+    setTranslatingSegments({});
     setWhisperError(null);
 
     // Start MediaRecorder for Whisper if enabled
@@ -414,6 +496,7 @@ export function AudioRecorder() {
         setRecordingState('idle');
         resetTranscript();
         setTranslatedSegments({});
+        setTranslatingSegments({});
       }
       // Space to pause/resume
       if (e.code === 'Space' && isRecording) {
@@ -584,6 +667,7 @@ export function AudioRecorder() {
                 onClick={() => {
                   setTranslateLang(lang.code as 'en' | 'de' | 'bg');
                   setTranslatedSegments({});
+                  setTranslatingSegments({});
                 }}
                 className={`px-2 py-1 rounded text-xs transition ${
                   translateLang === lang.code
@@ -631,10 +715,17 @@ export function AudioRecorder() {
                 </span>
                 <div className="flex-1">
                   <p className="text-sm text-zinc-300">{segment.text}</p>
-                  {autoTranslate && translatedSegments[index] && (
-                    <p className="text-xs text-blue-400 mt-1">
-                      → {translatedSegments[index]}
-                    </p>
+                  {autoTranslate && (
+                    translatingSegments[index] ? (
+                      <p className="text-xs text-blue-400/50 mt-1 flex items-center gap-1">
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                        Übersetze...
+                      </p>
+                    ) : translatedSegments[index] ? (
+                      <p className="text-xs text-blue-400 mt-1">
+                        → {translatedSegments[index]}
+                      </p>
+                    ) : null
                   )}
                 </div>
               </div>

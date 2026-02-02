@@ -1129,8 +1129,13 @@ ${note.summary || 'Keine Zusammenfassung verfügbar.'}
                     </span>
                     <div className="flex-1">
                       <p className="text-sm text-zinc-300">{segment.text}</p>
-                      {segment.translation && note.translationLanguage && (
-                        <p className="text-xs text-blue-400 mt-1">
+                      {segment.translation && (
+                        <p className={`text-xs mt-1 ${
+                          note.translationLanguage === 'en' ? 'text-blue-400' :
+                          note.translationLanguage === 'bg' ? 'text-orange-400' :
+                          note.translationLanguage === 'de' ? 'text-yellow-400' :
+                          'text-blue-400'
+                        }`}>
                           → {segment.translation}
                         </p>
                       )}
