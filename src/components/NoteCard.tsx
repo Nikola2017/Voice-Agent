@@ -373,20 +373,69 @@ ${note.summary || 'Keine Zusammenfassung verfügbar.'}
     setIsEditingSummary(false);
   };
 
+  // Helper function to translate a single chunk with retry logic
+  const translateSingleChunk = async (
+    chunk: string,
+    sourceLang: string,
+    targetLang: string,
+    retries: number = 3
+  ): Promise<string> => {
+    for (let attempt = 0; attempt < retries; attempt++) {
+      try {
+        const response = await fetch(
+          `https://api.mymemory.translated.net/get?q=${encodeURIComponent(chunk)}&langpair=${sourceLang}|${targetLang}`
+        );
+
+        if (!response.ok) {
+          if (attempt < retries - 1) {
+            await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
+            continue;
+          }
+          throw new Error(`HTTP ${response.status}`);
+        }
+
+        const data = await response.json();
+
+        // Check for quota exceeded
+        if (data.responseStatus === 403 || data.responseDetails?.toLowerCase().includes('limit')) {
+          throw new Error('QUOTA_EXCEEDED');
+        }
+
+        if (data.responseStatus === 200 && data.responseData?.translatedText) {
+          return data.responseData.translatedText;
+        }
+
+        // If translation returned empty or error, retry
+        if (attempt < retries - 1) {
+          await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
+          continue;
+        }
+
+        // Last resort - return original chunk
+        console.warn(`Translation failed for chunk, returning original: ${chunk.substring(0, 50)}...`);
+        return chunk;
+      } catch (error) {
+        if (error instanceof Error && error.message === 'QUOTA_EXCEEDED') {
+          throw error;
+        }
+        if (attempt < retries - 1) {
+          await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
+          continue;
+        }
+        // Return original text on final failure
+        return chunk;
+      }
+    }
+    return chunk;
+  };
+
   // Helper function to translate text in chunks (MyMemory limit is ~500 chars)
   const translateInChunks = async (text: string, sourceLang: string, targetLang: string): Promise<string> => {
     const CHUNK_SIZE = 400; // Safe limit for MyMemory API
 
     // If text is small enough, translate directly
     if (text.length <= CHUNK_SIZE) {
-      const response = await fetch(
-        `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=${sourceLang}|${targetLang}`
-      );
-      const data = await response.json();
-      if (data.responseStatus === 200) {
-        return data.responseData.translatedText;
-      }
-      throw new Error('Translation failed');
+      return await translateSingleChunk(text, sourceLang, targetLang);
     }
 
     // Split text into sentences or chunks
@@ -422,16 +471,17 @@ ${note.summary || 'Keine Zusammenfassung verfügbar.'}
     const translatedChunks: string[] = [];
     for (let i = 0; i < chunks.length; i++) {
       const chunk = chunks[i];
-      if (i > 0) await new Promise(r => setTimeout(r, 300)); // Small delay between requests
+      if (i > 0) await new Promise(r => setTimeout(r, 500)); // Delay between requests
 
-      const response = await fetch(
-        `https://api.mymemory.translated.net/get?q=${encodeURIComponent(chunk)}&langpair=${sourceLang}|${targetLang}`
-      );
-      const data = await response.json();
-      if (data.responseStatus === 200) {
-        translatedChunks.push(data.responseData.translatedText);
-      } else {
-        throw new Error(`Translation failed for chunk ${i + 1}`);
+      try {
+        const translated = await translateSingleChunk(chunk, sourceLang, targetLang);
+        translatedChunks.push(translated);
+      } catch (error) {
+        if (error instanceof Error && error.message === 'QUOTA_EXCEEDED') {
+          throw new Error('QUOTA_EXCEEDED');
+        }
+        // On error, use original chunk and continue
+        translatedChunks.push(chunk);
       }
     }
 
@@ -476,7 +526,11 @@ ${note.summary || 'Keine Zusammenfassung verfügbar.'}
       setShowDeTranslation(false);
     } catch (error) {
       console.error('Translation error:', error);
-      alert('Übersetzung fehlgeschlagen. Text zu lang oder API-Limit erreicht.');
+      if (error instanceof Error && error.message === 'QUOTA_EXCEEDED') {
+        alert('Übersetzung fehlgeschlagen. API-Limit erreicht. Bitte später erneut versuchen.');
+      } else {
+        alert('Übersetzung fehlgeschlagen. Bitte erneut versuchen.');
+      }
     } finally {
       setIsTranslating(false);
     }
@@ -518,7 +572,11 @@ ${note.summary || 'Keine Zusammenfassung verfügbar.'}
       setShowDeTranslation(false);
     } catch (error) {
       console.error('Bulgarian translation error:', error);
-      alert('Превод неуспешен. Текстът е твърде дълъг.');
+      if (error instanceof Error && error.message === 'QUOTA_EXCEEDED') {
+        alert('Превод неуспешен. API лимитът е достигнат. Моля, опитайте по-късно.');
+      } else {
+        alert('Превод неуспешен. Моля, опитайте отново.');
+      }
     } finally {
       setIsTranslatingBg(false);
     }
@@ -560,7 +618,11 @@ ${note.summary || 'Keine Zusammenfassung verfügbar.'}
       setShowBgTranslation(false);
     } catch (error) {
       console.error('German translation error:', error);
-      alert('Übersetzung fehlgeschlagen. Text zu lang.');
+      if (error instanceof Error && error.message === 'QUOTA_EXCEEDED') {
+        alert('Übersetzung fehlgeschlagen. API-Limit erreicht. Bitte später erneut versuchen.');
+      } else {
+        alert('Übersetzung fehlgeschlagen. Bitte erneut versuchen.');
+      }
     } finally {
       setIsTranslatingDe(false);
     }
