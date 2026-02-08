@@ -166,9 +166,9 @@ export function AudioRecorder() {
   } = useSpeechRecognition(currentLanguage, voiceCallbacks);
 
   // Auto-translate new segments - translate ALL segments that don't have translations
-  // Skip live translation when Whisper is enabled (segments will be re-transcribed anyway)
+  // Now also works with Whisper enabled (shows live translations during recording, final uses Whisper)
   useEffect(() => {
-    if (autoTranslate && transcriptSegments.length > 0 && !useWhisper) {
+    if (autoTranslate && transcriptSegments.length > 0) {
       // Translate all segments that don't have translations yet and aren't currently being translated
       transcriptSegments.forEach((segment, index) => {
         if (!translatedSegments[index] && !translatingSegments[index]) {
@@ -194,7 +194,7 @@ export function AudioRecorder() {
         }
       });
     }
-  }, [transcriptSegments, autoTranslate, translateLang, translatedSegments, translatingSegments, currentLanguage, useWhisper]);
+  }, [transcriptSegments, autoTranslate, translateLang, translatedSegments, translatingSegments, currentLanguage]);
 
   // Handle stop and save
   const handleStop = useCallback(async () => {
@@ -212,11 +212,61 @@ export function AudioRecorder() {
       setProcessingStatus('🎯 Whisper AI analysiert Audio für beste Qualität...');
 
       try {
-        // Stop the MediaRecorder
+        // Stop the MediaRecorder and ensure all data is captured
         await new Promise<void>((resolve) => {
-          if (mediaRecorderRef.current) {
-            mediaRecorderRef.current.onstop = () => resolve();
+          if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+            // Request any pending data before stopping
+            try {
+              mediaRecorderRef.current.requestData();
+            } catch (e) {
+              console.log('requestData not supported or failed');
+            }
+
+            // Wait for both the final dataavailable and onstop events
+            let dataReceived = false;
+            let stopped = false;
+
+            const checkComplete = () => {
+              if (dataReceived && stopped) {
+                resolve();
+              }
+            };
+
+            mediaRecorderRef.current.ondataavailable = (event) => {
+              if (event.data.size > 0) {
+                audioChunksRef.current.push(event.data);
+                console.log('Whisper: Final data chunk received, size:', event.data.size);
+              }
+              dataReceived = true;
+              checkComplete();
+            };
+
+            mediaRecorderRef.current.onstop = () => {
+              console.log('Whisper: MediaRecorder stopped, total chunks:', audioChunksRef.current.length);
+              stopped = true;
+              checkComplete();
+            };
+
             mediaRecorderRef.current.stop();
+
+            // Fallback timeout in case events don't fire properly
+            setTimeout(() => {
+              if (!stopped || !dataReceived) {
+                console.warn('Whisper: Timeout waiting for MediaRecorder events');
+                resolve();
+              }
+            }, 1000);
+          } else if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'paused') {
+            // If paused, resume briefly then stop
+            mediaRecorderRef.current.resume();
+            setTimeout(() => {
+              if (mediaRecorderRef.current) {
+                mediaRecorderRef.current.onstop = () => resolve();
+                mediaRecorderRef.current.stop();
+              } else {
+                resolve();
+              }
+            }, 100);
           } else {
             resolve();
           }
@@ -501,7 +551,8 @@ export function AudioRecorder() {
         };
 
         mediaRecorderRef.current = mediaRecorder;
-        mediaRecorder.start(1000); // Capture in 1-second chunks
+        // Capture in smaller chunks (250ms) to avoid losing data at the end
+        mediaRecorder.start(250);
         console.log('Whisper: MediaRecorder started' + (useSystemAudio ? ' with system audio' : ''));
       } catch (err) {
         console.error('Failed to start MediaRecorder:', err);
@@ -804,7 +855,7 @@ export function AudioRecorder() {
                 'Live-Transkription'
               )}
             </span>
-            {autoTranslate && !useWhisper && (
+            {autoTranslate && (
               <span className="text-xs text-blue-400">
                 → {translateLang.toUpperCase()}
               </span>
