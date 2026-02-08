@@ -23,9 +23,16 @@ export async function POST(request: NextRequest) {
       }, { status: 400 });
     }
 
+    // Determine file extension from file type
+    const fileType = audioFile.type || 'audio/webm';
+    const fileExtension = fileType.includes('mp4') ? 'mp4' :
+                          fileType.includes('ogg') ? 'ogg' :
+                          fileType.includes('wav') ? 'wav' :
+                          fileType.includes('mpeg') ? 'mp3' : 'webm';
+
     // Create FormData for OpenAI API
     const openAIFormData = new FormData();
-    openAIFormData.append('file', audioFile, 'audio.webm');
+    openAIFormData.append('file', audioFile, `audio.${fileExtension}`);
     openAIFormData.append('model', 'whisper-1');
     openAIFormData.append('language', language === 'de' ? 'de' : language === 'bg' ? 'bg' : 'en');
     openAIFormData.append('response_format', 'verbose_json');

@@ -131,6 +131,7 @@ export function AudioRecorder() {
   const audioChunksRef = useRef<Blob[]>([]);
   const systemStreamRef = useRef<MediaStream | null>(null);
   const [whisperError, setWhisperError] = useState<string | null>(null);
+  const [whisperResult, setWhisperResult] = useState<{transcript: string; segments: any[]} | null>(null);
 
   // Voice command callbacks
   const voiceCallbacks = useMemo(() => ({
@@ -208,7 +209,7 @@ export function AudioRecorder() {
 
     if (useWhisper && mediaRecorderRef.current) {
       setRecordingState('processing');
-      setProcessingStatus('Whisper: Transkribiere Audio...');
+      setProcessingStatus('🎯 Whisper AI analysiert Audio für beste Qualität...');
 
       try {
         // Stop the MediaRecorder
@@ -233,16 +234,20 @@ export function AudioRecorder() {
         }
 
         // Create audio blob
-        const audioBlob = new Blob(audioChunksRef.current, {
-          type: mediaRecorderRef.current?.mimeType || 'audio/webm'
-        });
+        const mimeType = mediaRecorderRef.current?.mimeType || 'audio/webm';
+        const audioBlob = new Blob(audioChunksRef.current, { type: mimeType });
 
-        console.log('Whisper: Audio blob size:', audioBlob.size);
+        // Determine correct file extension based on mimeType
+        const fileExtension = mimeType.includes('mp4') ? 'mp4' :
+                              mimeType.includes('ogg') ? 'ogg' :
+                              mimeType.includes('wav') ? 'wav' : 'webm';
+
+        console.log('Whisper: Audio blob size:', audioBlob.size, 'mimeType:', mimeType);
 
         if (audioBlob.size > 0) {
           // Send to Whisper API
           const formData = new FormData();
-          formData.append('audio', audioBlob, 'recording.webm');
+          formData.append('audio', audioBlob, `recording.${fileExtension}`);
           formData.append('language', currentLanguage);
 
           const response = await fetch('/api/whisper', {
@@ -260,6 +265,8 @@ export function AudioRecorder() {
               translation: undefined,
             })) || [];
             console.log('Whisper transcript:', whisperTranscript);
+            setWhisperResult({ transcript: whisperTranscript, segments: whisperSegments });
+            setProcessingStatus('✅ Whisper Transkription abgeschlossen!');
           } else {
             console.error('Whisper API error:', data.error);
             setWhisperError(data.message || 'Whisper Transkription fehlgeschlagen');
@@ -317,7 +324,8 @@ export function AudioRecorder() {
 
     // If auto-translate was enabled, translate all segments before saving
     if (autoTranslate && savedTimestampedSegments.length > 0) {
-      setProcessingStatus('Übersetze Segmente...');
+      const segmentCount = savedTimestampedSegments.length;
+      setProcessingStatus(`🌐 Übersetze ${segmentCount} Segment${segmentCount > 1 ? 'e' : ''} nach ${translateLang.toUpperCase()}...`);
       console.log('=== Translating segments before save ===');
 
       const translatedSegmentsPromises = savedTimestampedSegments.map(async (segment, index) => {
@@ -383,6 +391,7 @@ export function AudioRecorder() {
         resetTranscript();
         setTranslatedSegments({});
         setTranslatingSegments({});
+        setWhisperResult(null);
       }, 1000);
 
     } catch (err) {
@@ -410,6 +419,7 @@ export function AudioRecorder() {
       resetTranscript();
       setTranslatedSegments({});
       setTranslatingSegments({});
+      setWhisperResult(null);
     }
   }, [stopRecording, currentLanguage, currentMode, recordingTime, setRecordingState, addNote, resetTranscript, transcriptSegments, translatedSegments, autoTranslate, translateLang, useWhisper]);
 
@@ -420,6 +430,7 @@ export function AudioRecorder() {
     setTranslatedSegments({});
     setTranslatingSegments({});
     setWhisperError(null);
+    setWhisperResult(null);
 
     // Start MediaRecorder for Whisper if enabled
     if (useWhisper) {
@@ -567,6 +578,7 @@ export function AudioRecorder() {
         resetTranscript();
         setTranslatedSegments({});
         setTranslatingSegments({});
+        setWhisperResult(null);
       }
       // Space to pause/resume
       if (e.code === 'Space' && isRecording) {
@@ -616,9 +628,16 @@ export function AudioRecorder() {
     <div className="flex flex-col items-center">
       {/* Whisper Indicator */}
       {useWhisper && (
-        <div className="mb-4 px-4 py-2 rounded-lg bg-green-500/20 border border-green-500/30 flex items-center gap-2 text-green-400 text-sm">
-          <Sparkles className="w-4 h-4" />
-          Whisper AI aktiviert - Bessere Transkription
+        <div className="mb-4 px-4 py-2 rounded-lg bg-green-500/20 border border-green-500/30 text-sm">
+          <div className="flex items-center gap-2 text-green-400">
+            <Sparkles className="w-4 h-4" />
+            Whisper AI aktiviert - Bessere Transkription
+          </div>
+          {isRecording && (
+            <p className="text-xs text-green-400/70 mt-1 ml-6">
+              Live-Vorschau nutzt Browser-Erkennung. Whisper analysiert das komplette Audio nach dem Stoppen für höhere Genauigkeit.
+            </p>
+          )}
         </div>
       )}
 
@@ -776,9 +795,16 @@ export function AudioRecorder() {
           <div className="px-4 py-2 bg-purple-500/10 border-b border-purple-500/10 flex items-center justify-between">
             <span className="text-xs text-zinc-500 flex items-center gap-2">
               <Languages className="w-3 h-3" />
-              Live-Transkription
+              {useWhisper ? (
+                <span className="flex items-center gap-1">
+                  <span className="text-yellow-400">Browser-Vorschau</span>
+                  <span className="text-zinc-600">(Whisper analysiert nach Stopp)</span>
+                </span>
+              ) : (
+                'Live-Transkription'
+              )}
             </span>
-            {autoTranslate && (
+            {autoTranslate && !useWhisper && (
               <span className="text-xs text-blue-400">
                 → {translateLang.toUpperCase()}
               </span>
@@ -818,6 +844,28 @@ export function AudioRecorder() {
                 <p className="text-sm text-zinc-500 italic flex-1">{interimTranscript}</p>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Whisper Result Display (shows after processing) */}
+      {!isRecording && whisperResult && recordingState === 'processing' && (
+        <div className="mt-4 w-full max-w-2xl rounded-lg bg-[#1a1325] border border-green-500/20 overflow-hidden">
+          <div className="px-4 py-2 bg-green-500/10 border-b border-green-500/10 flex items-center gap-2">
+            <Sparkles className="w-4 h-4 text-green-400" />
+            <span className="text-sm font-medium text-green-400">
+              Whisper AI Ergebnis
+            </span>
+          </div>
+          <div className="max-h-60 overflow-y-auto p-2">
+            {whisperResult.segments.map((segment: any, index: number) => (
+              <div key={index} className="flex gap-3 py-2 border-b border-green-500/5 last:border-0">
+                <span className="text-xs font-mono text-green-400 w-12 flex-shrink-0">
+                  {formatTime(segment.timestamp)}
+                </span>
+                <p className="text-sm text-zinc-300 flex-1">{segment.text}</p>
+              </div>
+            ))}
           </div>
         </div>
       )}
