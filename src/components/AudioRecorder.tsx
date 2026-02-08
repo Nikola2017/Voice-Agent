@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState, useMemo, useRef } from 'react';
-import { Mic, Square, Loader2, AlertCircle, Pause, Play, Languages, Globe, Sparkles, Monitor } from 'lucide-react';
+import { Mic, Square, Loader2, AlertCircle, Pause, Play, Languages, Globe, Sparkles, Monitor, Volume2, VolumeX } from 'lucide-react';
 import { useSpeechRecognition, type TranscriptSegment } from '@/hooks/useSpeechRecognition';
 import { useAppStore } from '@/lib/store';
 import { LANGUAGES, type Note, type TimestampedSegment } from '@/types';
@@ -109,6 +109,47 @@ async function translateText(text: string, sourceLang: string, targetLang: strin
   return text;
 }
 
+// Speak text using Web Speech Synthesis API
+function speakText(text: string, lang: string, onEnd?: () => void): SpeechSynthesisUtterance | null {
+  if (!text || text.trim().length === 0) {
+    return null;
+  }
+
+  // Cancel any ongoing speech
+  window.speechSynthesis.cancel();
+
+  const utterance = new SpeechSynthesisUtterance(text);
+
+  // Map language codes to speech synthesis voices
+  const langMap: { [key: string]: string } = {
+    'en': 'en-US',
+    'de': 'de-DE',
+    'bg': 'bg-BG',
+  };
+
+  utterance.lang = langMap[lang] || lang;
+  utterance.rate = 1.0; // Normal speed
+  utterance.pitch = 1.0;
+  utterance.volume = 1.0;
+
+  // Try to find a good voice for the language
+  const voices = window.speechSynthesis.getVoices();
+  const preferredVoice = voices.find(v =>
+    v.lang.startsWith(lang) || v.lang.startsWith(langMap[lang])
+  );
+  if (preferredVoice) {
+    utterance.voice = preferredVoice;
+  }
+
+  if (onEnd) {
+    utterance.onend = onEnd;
+    utterance.onerror = onEnd;
+  }
+
+  window.speechSynthesis.speak(utterance);
+  return utterance;
+}
+
 export function AudioRecorder() {
   const {
     recordingState,
@@ -125,6 +166,12 @@ export function AudioRecorder() {
   const [translateLang, setTranslateLang] = useState<'en' | 'de' | 'bg'>('en');
   const [translatedSegments, setTranslatedSegments] = useState<{[key: number]: string}>({});
   const [translatingSegments, setTranslatingSegments] = useState<{[key: number]: boolean}>({});
+
+  // Voice Translation (TTS) state
+  const [voiceTranslationEnabled, setVoiceTranslationEnabled] = useState(false);
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const lastSpokenSegmentRef = useRef<number>(-1);
+  const speechSynthRef = useRef<SpeechSynthesisUtterance | null>(null);
 
   // Whisper audio recording
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -195,6 +242,43 @@ export function AudioRecorder() {
       });
     }
   }, [transcriptSegments, autoTranslate, translateLang, translatedSegments, translatingSegments, currentLanguage]);
+
+  // Voice Translation: Speak translations as they become available
+  useEffect(() => {
+    if (!voiceTranslationEnabled || !autoTranslate || !isRecording) {
+      return;
+    }
+
+    // Find the latest translated segment that hasn't been spoken yet
+    const latestTranslatedIndex = Object.keys(translatedSegments)
+      .map(Number)
+      .sort((a, b) => b - a)[0];
+
+    if (
+      latestTranslatedIndex !== undefined &&
+      latestTranslatedIndex > lastSpokenSegmentRef.current &&
+      translatedSegments[latestTranslatedIndex] &&
+      !isSpeaking
+    ) {
+      const textToSpeak = translatedSegments[latestTranslatedIndex];
+      console.log(`[VoiceTranslation] Speaking segment ${latestTranslatedIndex}: "${textToSpeak}"`);
+
+      setIsSpeaking(true);
+      lastSpokenSegmentRef.current = latestTranslatedIndex;
+
+      speechSynthRef.current = speakText(textToSpeak, translateLang, () => {
+        setIsSpeaking(false);
+        speechSynthRef.current = null;
+      });
+    }
+  }, [translatedSegments, voiceTranslationEnabled, autoTranslate, isRecording, translateLang, isSpeaking]);
+
+  // Cleanup speech synthesis on unmount or when voice translation is disabled
+  useEffect(() => {
+    return () => {
+      window.speechSynthesis.cancel();
+    };
+  }, []);
 
   // Handle stop and save
   const handleStop = useCallback(async () => {
@@ -331,21 +415,41 @@ export function AudioRecorder() {
       audioChunksRef.current = [];
     }
 
-    // Use Whisper transcript if available, otherwise fall back to Web Speech
-    const finalTranscript = useWhisper && whisperTranscript ? whisperTranscript : webSpeechTranscript;
+    // Smart fallback: Compare Whisper and Web Speech results
+    // If Whisper returns significantly less text, use Web Speech instead
+    const webSpeechLength = webSpeechTranscript.length;
+    const whisperLength = whisperTranscript.length;
+    const whisperRatio = webSpeechLength > 0 ? whisperLength / webSpeechLength : 1;
+
+    console.log('=== Comparing transcription sources ===');
+    console.log('Web Speech length:', webSpeechLength);
+    console.log('Whisper length:', whisperLength);
+    console.log('Whisper/WebSpeech ratio:', whisperRatio.toFixed(2));
+
+    // Use Whisper only if it provides at least 30% of the Web Speech text length
+    // OR if Web Speech has nothing (whisperRatio would be 1 or Infinity)
+    const useWhisperResult = useWhisper && whisperTranscript && (whisperRatio >= 0.3 || webSpeechLength === 0);
+
+    if (useWhisper && !useWhisperResult && webSpeechLength > 0) {
+      console.warn('⚠️ Whisper result too short/poor, falling back to Web Speech');
+      setProcessingStatus('⚠️ Whisper-Ergebnis zu kurz - verwende Browser-Transkription');
+    }
+
+    const finalTranscript = useWhisperResult ? whisperTranscript : webSpeechTranscript;
 
     // Build timestamped segments with translations
     let savedTimestampedSegments: TimestampedSegment[];
 
     console.log('=== Building timestamped segments ===');
     console.log('useWhisper:', useWhisper);
+    console.log('useWhisperResult:', useWhisperResult);
     console.log('whisperSegments:', whisperSegments.length);
     console.log('transcriptSegments:', transcriptSegments.length);
     console.log('translatedSegments:', translatedSegments);
     console.log('autoTranslate:', autoTranslate);
     console.log('translateLang:', translateLang);
 
-    if (useWhisper && whisperSegments.length > 0) {
+    if (useWhisperResult && whisperSegments.length > 0) {
       // Use Whisper segments - translations will be fetched fresh below
       // Don't try to match with Web Speech translations (they have different segment boundaries)
       savedTimestampedSegments = whisperSegments.map((segment) => ({
@@ -353,12 +457,13 @@ export function AudioRecorder() {
         translation: undefined, // Will be translated fresh below
       }));
     } else {
-      // Use Web Speech segments with translations
+      // Use Web Speech segments with translations (either Whisper disabled or Whisper gave poor results)
       savedTimestampedSegments = transcriptSegments.map((segment, index) => ({
         timestamp: segment.timestamp,
         text: segment.text,
         translation: translatedSegments[index] || undefined,
       }));
+      console.log('Using Web Speech segments:', savedTimestampedSegments.length);
     }
 
     console.log('savedTimestampedSegments before final translation:', savedTimestampedSegments);
@@ -442,6 +547,10 @@ export function AudioRecorder() {
         setTranslatedSegments({});
         setTranslatingSegments({});
         setWhisperResult(null);
+        // Reset voice translation
+        window.speechSynthesis.cancel();
+        setIsSpeaking(false);
+        lastSpokenSegmentRef.current = -1;
       }, 1000);
 
     } catch (err) {
@@ -470,6 +579,10 @@ export function AudioRecorder() {
       setTranslatedSegments({});
       setTranslatingSegments({});
       setWhisperResult(null);
+      // Reset voice translation
+      window.speechSynthesis.cancel();
+      setIsSpeaking(false);
+      lastSpokenSegmentRef.current = -1;
     }
   }, [stopRecording, currentLanguage, currentMode, recordingTime, setRecordingState, addNote, resetTranscript, transcriptSegments, translatedSegments, autoTranslate, translateLang, useWhisper]);
 
@@ -481,6 +594,11 @@ export function AudioRecorder() {
     setTranslatingSegments({});
     setWhisperError(null);
     setWhisperResult(null);
+
+    // Reset voice translation state
+    lastSpokenSegmentRef.current = -1;
+    setIsSpeaking(false);
+    window.speechSynthesis.cancel();
 
     // Start MediaRecorder for Whisper if enabled
     if (useWhisper) {
@@ -630,6 +748,10 @@ export function AudioRecorder() {
         setTranslatedSegments({});
         setTranslatingSegments({});
         setWhisperResult(null);
+        // Stop voice translation
+        window.speechSynthesis.cancel();
+        setIsSpeaking(false);
+        lastSpokenSegmentRef.current = -1;
       }
       // Space to pause/resume
       if (e.code === 'Space' && isRecording) {
@@ -816,6 +938,7 @@ export function AudioRecorder() {
                   setTranslateLang(lang.code as 'en' | 'de' | 'bg');
                   setTranslatedSegments({});
                   setTranslatingSegments({});
+                  lastSpokenSegmentRef.current = -1; // Reset spoken segments for new language
                 }}
                 className={`px-2 py-1 rounded text-xs transition ${
                   translateLang === lang.code
@@ -827,6 +950,37 @@ export function AudioRecorder() {
               </button>
             ))}
           </div>
+
+          {/* Voice Translation Toggle */}
+          <button
+            onClick={() => {
+              const newState = !voiceTranslationEnabled;
+              setVoiceTranslationEnabled(newState);
+              if (!newState) {
+                window.speechSynthesis.cancel();
+                setIsSpeaking(false);
+              }
+              lastSpokenSegmentRef.current = transcriptSegments.length - 1; // Don't speak past segments
+            }}
+            className={`ml-2 px-2 py-1 rounded text-xs flex items-center gap-1 transition ${
+              voiceTranslationEnabled
+                ? 'bg-green-500 text-white'
+                : 'bg-[#241b2f] text-zinc-400 hover:text-white border border-zinc-600'
+            }`}
+            title={voiceTranslationEnabled ? 'Sprachausgabe deaktivieren' : 'Sprachausgabe aktivieren'}
+          >
+            {voiceTranslationEnabled ? (
+              <>
+                <Volume2 className="w-3 h-3" />
+                {isSpeaking ? 'Spricht...' : 'Vorlesen AN'}
+              </>
+            ) : (
+              <>
+                <VolumeX className="w-3 h-3" />
+                Vorlesen
+              </>
+            )}
+          </button>
         </div>
       )}
 
